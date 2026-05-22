@@ -139,9 +139,56 @@ sentence-transformers 对 ≤5 字的短文本会产生完全相同的嵌入向�
 
 ### 安装
 
+ChainMem 采用**分层依赖**设计，你可以按需选择安装方式：
+
+| 安装方式 | 命令 | 大小 | 功能 |
+|:---------|:-----|:----:|:-----|
+| 🪶 **核心版** | `pip install chainmem` | **~2 MB** | CLI、SQLite存储、文本检索 |
+| 🔥 **完整版** | `pip install chainmem[full]` | ~1.5~2 GB | 以上 + 语义搜索 |
+| 🐍 **源码** | `git clone ... && pip install -e .` | ~20 KB | 自装依赖 |
+
+> **💡 建议：** 先装核心版感受一下，需要语义搜索时再装完整版。
+
+#### 🪶 核心版（推荐首次尝试）
+
 ```bash
 pip install chainmem
 ```
+
+几秒下完，支持：
+- CLI 全功能（ingest / retrieve / stats / serve）
+- SQLite 持久化 + FTS5 文本搜索
+- MCP 服务器
+- **语义搜索需额外安装依赖**
+
+#### 🔥 完整版（启用语义搜索）
+
+```bash
+pip install chainmem[full]
+```
+
+自动安装 sentence-transformers 和 faiss-cpu，带来 FAISS 向量语义搜索和高精度混合检索。
+
+#### 📦 手动安装依赖
+
+如果网络慢或想自己控制版本：
+
+```bash
+pip install chainmem
+pip install sentence-transformers>=3.0
+pip install faiss-cpu>=1.8
+```
+
+依赖下载地址（可离线安装）：
+
+| 依赖 | PyPI 地址 | 大小 |
+|:-----|:----------|:----:|
+| sentence-transformers | pypi.org/project/sentence-transformers/ | ~500 MB |
+| faiss-cpu | pypi.org/project/faiss-cpu/ | ~30 MB |
+| transformers | pypi.org/project/transformers/ | ~300 MB |
+| torch | pypi.org/project/torch/ | ~800 MB |
+
+> **注意：** 只装核心版时，调用 `ingest()` 或 `retrieve()` 会提示安装完整版。CLI 基本操作和 MCP 服务器不受影响。
 
 ### Python SDK
 
@@ -252,7 +299,7 @@ chainmem/
 
 ChainMem 是一个**开源项目**，仓库在 GitHub：[https://github.com/yabolee-kkk/chainmem](https://github.com/yabolee-kkk/chainmem)
 
-当前处于 **Alpha 阶段**（v0.3.0），核心闭环已完成：
+当前处于 **Alpha 阶段**（v0.4.1），核心闭环已完成：
 
 - ✅ 结链（文本 → 切块 → 嵌入 → 存储）
 - ✅ 追溯（语义搜索 + 子串匹配 + 指针遍历）
@@ -292,4 +339,7 @@ ChainMem 的灵感来自一个简单的观察：**AI Agent 说一句话就要翻
 
 **GitHub:** https://github.com/yabolee-kkk/chainmem  
 **PyPI:** https://pypi.org/project/chainmem/  
-**安装：** `pip install chainmem`
+**安装：**
+- 🪶 核心版（秒级下载）：`pip install chainmem`
+- 🔥 完整版（含语义搜索）：`pip install chainmem[full]`
+- 📦 离线安装：下载 whl 后 `pip install *.whl`

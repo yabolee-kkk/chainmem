@@ -71,7 +71,7 @@ ChainMem 用**链式结构**模拟人脑的联想回忆：
 | ⚡ **毫秒级响应** | 查询 ~22ms，增量添加 ~132ms |
 | 🚀 **秒级启动** | FAISS 索引持久化，重启从 60s → 1s |
 | 🏷️ **标签分类** | 按项目/主题组织记忆 |
-| 🔌 **MCP 协议** | 原生支持 Hermes Agent 等 AI Agent 集成 |
+| 🔌 **MCP 协议** | 原生支持 Hermes Agent 等 AI Agent 集成（[配置指南](docs/mcp-integration.md)） |
 | 🐍 **Python SDK** | 一句话集成到你的项目 |
 
 ---
