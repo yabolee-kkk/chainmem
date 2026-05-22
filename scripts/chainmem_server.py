@@ -111,6 +111,7 @@ async def handle(reader, writer):
                                 chain_ids=[n.chain_id for n in nodes],
                                 next_ids=[n.next_id for n in nodes],
                                 seqs=[n.seq for n in nodes],
+                                prev_ids=[n.prev_id for n in nodes],
                             )
                         return chain
 

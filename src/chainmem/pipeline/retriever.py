@@ -309,6 +309,21 @@ class Retriever:
         candidates.sort(key=lambda x: -x[0])
         best_combined_score, start_id = candidates[0]
 
+        # ── Step 2.5: 当 FAISS 最佳候选不含查询词时，尝试模糊兜底 ──
+        tokens = self._tokenize_query(raw_query)
+        if len(tokens) >= 2 and best_score < 0.7:
+            top_node_text = self.id_to_text.get(start_id, "")
+            if top_node_text:
+                top_matches = sum(
+                    1 for t in tokens if self._fuzzy_match(t, top_node_text)
+                )
+                if top_matches / len(tokens) < 0.5:
+                    fallback_results = self._substring_fallback(
+                        raw_query, tags=tags
+                    )
+                    if fallback_results:
+                        return fallback_results
+
         # ── Step 3: 链遍历 ──
         results = self._traverse_forward(start_id, max_steps)
         return results
@@ -353,8 +368,8 @@ class Retriever:
                         node_tags = self.chain_tags.get(chain_id, [])
                         if not any(t in node_tags for t in tags):
                             continue
-                    # 统计命中词数
-                    hits = sum(1 for t in tokens if t in text)
+                    # 统计命中词数（含编辑距离兜底）
+                    hits = sum(1 for t in tokens if self._fuzzy_match(t, text))
                     if hits > 0:
                         scored.append((hits / max(len(tokens), 1), nid))
 
@@ -398,6 +413,40 @@ class Retriever:
                 tokens.add(sub)
 
         return list(tokens)
+
+    @staticmethod
+    def _levenshtein(s1: str, s2: str) -> int:
+        """计算编辑距离（迭代优化版，O(n) 空间）"""
+        if len(s1) < len(s2):
+            s1, s2 = s2, s1
+        if not s2:
+            return len(s1)
+        prev_row = list(range(len(s2) + 1))
+        for i, c1 in enumerate(s1):
+            curr_row = [i + 1]
+            for j, c2 in enumerate(s2):
+                insertions = prev_row[j + 1] + 1
+                deletions = curr_row[j] + 1
+                substitutions = prev_row[j] + (c1 != c2)
+                curr_row.append(min(insertions, deletions, substitutions))
+            prev_row = curr_row
+        return prev_row[-1]
+
+    def _fuzzy_match(self, token: str, text: str, max_dist: int = 2) -> bool:
+        """近似词匹配：先试精确子串，失败后用编辑距离比对文本中的长词
+
+        只在 token ≥5 字符时启用，避免短词（如 'in' 'to'）被错误匹配。
+        max_dist=2 允许：1 个字母替换 + 1 个字母增删 的拼写错误。
+        """
+        if token in text:
+            return True
+        if len(token) < 5:
+            return False
+        import re
+        for word in re.findall(r'\w{4,}', text):
+            if self._levenshtein(token, word) <= max_dist:
+                return True
+        return False
 
     def _get_text(self, node_id: str) -> str:
         """获取节点文本，加密时透明解密"""
