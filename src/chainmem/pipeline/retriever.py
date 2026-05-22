@@ -61,6 +61,7 @@ class Retriever:
         self.chain_tags: dict[str, list[str]] = {}  # chain_id → tags
         self.id_to_encrypted: dict[str, bool] = {}   # node_id → encrypted flag
         self.id_to_encryption_iv: dict[str, str] = {}  # node_id → encryption IV
+        self.id_to_prev: dict[str, str | None] = {}  # node_id → prev_id（双向遍历用）
 
     def _get_embedder(self):
         """惰性获取嵌入模型"""
@@ -89,6 +90,7 @@ class Retriever:
                 "chain_tags": self.chain_tags,
                 "id_to_encrypted": self.id_to_encrypted,
                 "id_to_encryption_iv": self.id_to_encryption_iv,
+                "id_to_prev": self.id_to_prev,
             }, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     def load_index(self) -> bool:
@@ -107,7 +109,8 @@ class Retriever:
             self.id_list = meta["id_list"]
             self.chain_tags = meta["chain_tags"]
             self.id_to_encrypted = meta.get("id_to_encrypted", {})  # 向后兼容
-            self.id_to_encryption_iv = meta.get("id_to_encryption_iv", {})
+            self.id_to_encryption_iv = meta.get("id_to_encryption_iv", {})  # 向后兼容
+            self.id_to_prev = meta.get("id_to_prev", {})  # 向后兼容（v0.5.2+）
             return True
         except Exception as e:
             print(f"[chainmem] 加载 FAISS 索引失败，将重建: {e}", file=__import__("sys").stderr)
@@ -124,7 +127,8 @@ class Retriever:
                   next_ids: list[str | None],
                   seqs: list[int],
                   encrypted_flags: list[bool] | None = None,
-                  encryption_ivs: list[str] | None = None):
+                  encryption_ivs: list[str] | None = None,
+                  prev_ids: list[str | None] | None = None):
         """增量添加节点到 FAISS 索引（无需全量重建）"""
         import faiss
         dim = embeddings.shape[1]
@@ -146,6 +150,8 @@ class Retriever:
                 self.id_to_encrypted[nid] = encrypted_flags[i]
             if encryption_ivs:
                 self.id_to_encryption_iv[nid] = encryption_ivs[i]
+            if prev_ids:
+                self.id_to_prev[nid] = prev_ids[i]
 
         # 持久化到磁盘
         self.save_index()
@@ -195,6 +201,7 @@ class Retriever:
         self.id_to_seq.clear()
         self.id_to_encrypted.clear()
         self.id_to_encryption_iv.clear()
+        self.id_to_prev.clear()
 
         for row in rows:
             nid = row["id"]
@@ -204,6 +211,7 @@ class Retriever:
             self.id_to_seq[nid] = row["seq"]
             self.id_to_encrypted[nid] = bool(row.get("encrypted", 0))
             self.id_to_encryption_iv[nid] = row.get("encryption_iv", "") or ""
+            self.id_to_prev[nid] = row.get("prev_id")
 
         # 重新嵌入所有文本
         texts = [self.id_to_text[nid] for nid in (r["id"] for r in rows)]
@@ -307,16 +315,18 @@ class Retriever:
 
     def _substring_fallback(self, query: str,
                             tags: list[str] | None = None) -> list[str]:
-        """纯子串匹配兜底：当语义搜索低于阈值时使用"""
+        """纯子串匹配兜底 + 模糊分词兜底
+
+        先尝试精确子串匹配（整句在节点中）。无结果时拆成词/字，
+        按命中词数排序选最佳起点。提高短查询和重组查询的召回率。
+        """
         if not query:
             return []
-        # 查找包含查询文本的节点（加密节点自动解密后匹配）
         matched_ids = []
         found_encrypted_no_key = False
         for nid in self.id_to_text:
             text = self._get_text(nid)
             if query in text:
-                # 标签过滤
                 if tags:
                     chain_id = self.id_to_chain.get(nid, "")
                     node_tags = self.chain_tags.get(chain_id, [])
@@ -327,13 +337,67 @@ class Retriever:
                 self.encryptor is None or not self.encryptor.available
             ):
                 found_encrypted_no_key = True
+
+        # ── 精确匹配无结果 → 模糊分词兜底 ──
+        if not matched_ids:
+            tokens = self._tokenize_query(query)
+            if len(tokens) >= 2:
+                scored: list[tuple[float, str]] = []
+                for nid in self.id_to_text:
+                    text = self._get_text(nid)
+                    if not text:
+                        continue
+                    # 标签过滤
+                    if tags:
+                        chain_id = self.id_to_chain.get(nid, "")
+                        node_tags = self.chain_tags.get(chain_id, [])
+                        if not any(t in node_tags for t in tags):
+                            continue
+                    # 统计命中词数
+                    hits = sum(1 for t in tokens if t in text)
+                    if hits > 0:
+                        scored.append((hits / max(len(tokens), 1), nid))
+
+                if scored:
+                    scored.sort(key=lambda x: -x[0])
+                    match_ratio = scored[0][0]
+                    matched_ids.append(scored[0][1])
+
         if not matched_ids:
             if found_encrypted_no_key:
                 return ["[🔒 存在匹配的加密记忆，请配置 CHAINMEM_KEY 解密]"]
             return []
-        # 选第一条匹配链的第一个节点开始遍历
+        # 按匹配质量排序，选最佳起点遍历
         start_id = matched_ids[0]
         return self._traverse_forward(start_id, 100)
+
+    @staticmethod
+    def _tokenize_query(query: str) -> list[str]:
+        """将查询拆成搜索用词元
+
+        策略：
+        - 按空格/标点拆分英文和中英混合词
+        - 对中文连续段提取 2-gram（覆盖不靠空格分隔的中文）
+        - 去重，过滤单字符
+        - 保留原查询词（供整体匹配用）
+        """
+        import re
+        tokens = set()
+
+        # 1. 按空格/标点拆分
+        for t in re.split(r'[\s,，。；：！？、()（）""''【】《》/\'\"\\s]+', query):
+            t = t.strip()
+            if len(t) >= 2:
+                tokens.add(t)
+
+        # 2. 中文 2-gram（覆盖"健忘问题"→"健忘"+"忘问"+"问题"这种）
+        for i in range(len(query) - 1):
+            sub = query[i:i+2]
+            if sub[0] >= '\u4e00' and sub[0] <= '\u9fff' and \
+               sub[1] >= '\u4e00' and sub[1] <= '\u9fff':
+                tokens.add(sub)
+
+        return list(tokens)
 
     def _get_text(self, node_id: str) -> str:
         """获取节点文本，加密时透明解密"""
@@ -353,23 +417,44 @@ class Retriever:
         else:
             return "[🔒 加密内容（需配置 CHAINMEM_KEY）]"
 
-    def _traverse_forward(self, start_id: str, max_steps: int) -> list[str]:
-        """从 start_id 开始，沿 next_id 向前遍历"""
+    def _traverse_bidirectional(self, start_id: str, max_steps: int = 100) -> list[str]:
+        """从 start_id 开始，沿 prev_id 向后 + next_id 向前双向遍历
+
+        先收集 start 之前的所有节点（\沿 prev_id 回溯到链头），
+        然后收集 start 及之后的所有节点（沿 next_id 走到链尾）。
+        确保匹配节点周围的上\下文也被完整保留。
+        """
         texts: list[str] = []
-        current_id: str | None = start_id
         visited = set()
 
+        # 1. 向后遍历（沿 prev_id 收集到链头 → 反转）
+        backward: list[str] = []
+        current_id: str | None = self.id_to_prev.get(start_id)
+        for _ in range(max_steps):
+            if current_id is None or current_id in visited:
+                break
+            visited.add(current_id)
+            text = self._get_text(current_id)
+            if not text:
+                break
+            backward.append(text)
+            current_id = self.id_to_prev.get(current_id)
+
+        # 反转向后收集的文本（从链头到 start 的前一个节点）
+        texts.extend(reversed(backward))
+
+        # 2. 向前遍历（从 start 沿 next_id 到链尾）
+        current_id = start_id
         for _ in range(max_steps):
             if current_id is None or current_id in visited:
                 break
             visited.add(current_id)
 
             text = self._get_text(current_id)
-            if text is None:
+            if text is None or not text:
                 break
             texts.append(text)
 
-            # 更新访问统计
             chain_id = self.id_to_chain.get(current_id)
             if chain_id:
                 self.store.update_chain_access(chain_id)
@@ -377,3 +462,7 @@ class Retriever:
             current_id = self.id_to_next.get(current_id)
 
         return texts
+
+    def _traverse_forward(self, start_id: str, max_steps: int) -> list[str]:
+        """向前遍历（原实现，保持向后兼容，新代码请用 _traverse_bidirectional）"""
+        return self._traverse_bidirectional(start_id, max_steps)
