@@ -9,6 +9,20 @@ import pytest
 
 from chainmem import ChainMemory
 from chainmem.pipeline.ingester import chunk_text
+from chainmem.pipeline import retriever as _ret_mod
+
+
+# 测试隔离：每个测试使用独立的 FAISS 索引路径，避免全局缓存干扰
+@pytest.fixture(autouse=True)
+def _isolate_faiss():
+    """每个测试使用专用 FAISS 缓存目录"""
+    tmpdir = tempfile.mkdtemp()
+    _ret_mod.INDEX_DIR = tmpdir
+    _ret_mod.FAISS_INDEX_PATH = os.path.join(tmpdir, "faiss_index.bin")
+    _ret_mod.FAISS_META_PATH = os.path.join(tmpdir, "faiss_metadata.pkl")
+    yield
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class TestChunking:

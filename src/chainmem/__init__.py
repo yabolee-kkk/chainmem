@@ -11,8 +11,11 @@ from chainmem.pipeline.retriever import Retriever
 class ChainMemory:
     """ChainMem 主入口类"""
 
-    def __init__(self, db_path: str = "~/.chainmem/data.db"):
+    def __init__(self, db_path: str = "~/.chainmem/data.db",
+                 key: str | None = None):
         self.db_path = db_path
+        self._key = key
+        self._encryptor = None
         self.store: SQLiteStore | None = None
         self.ingester: Ingester | None = None
         self.retriever: Retriever | None = None
@@ -23,10 +26,17 @@ class ChainMemory:
         path = os.path.expanduser(self.db_path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
+        # 初始化加密器（可选）
+        from chainmem.core.crypto import Encryptor
+        self._encryptor = Encryptor(key=self._key)
+        if not self._encryptor.available and self._encryptor.reason:
+            import sys
+            print(f"[chainmem] 🔑 {self._encryptor.reason}", file=sys.stderr)
+
         self.store = SQLiteStore(path)
         self.store.initialize()
-        self.ingester = Ingester(self.store)
-        self.retriever = Retriever(self.store)
+        self.ingester = Ingester(self.store, encryptor=self._encryptor)
+        self.retriever = Retriever(self.store, encryptor=self._encryptor)
         return self
 
     def close(self):

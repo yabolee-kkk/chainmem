@@ -54,6 +54,18 @@ class SQLiteStore:
         """)
         self.conn.commit()
 
+        # ── 数据库迁移：添加加密列（老数据库升级） ──
+        self._migrate_add_column("nodes", "encrypted", "INTEGER NOT NULL DEFAULT 0")
+        self._migrate_add_column("nodes", "encryption_iv", "TEXT DEFAULT ''")
+
+    def _migrate_add_column(self, table: str, column: str, col_def: str):
+        """如果表中不存在指定列，则 ALTER TABLE ADD COLUMN"""
+        cursor = self.conn.execute(f"PRAGMA table_info({table})")
+        existing = {row["name"] for row in cursor.fetchall()}
+        if column not in existing:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+            self.conn.commit()
+
     # ── Chain CRUD ──
 
     def save_chain(self, chain_id: str, anchor_prefix: str, root_id: str,
@@ -98,13 +110,14 @@ class SQLiteStore:
     # ── Node CRUD ──
 
     def save_node(self, node_id: str, chain_id: str, seq: int, text: str,
-                  prev_id: str | None = None, next_id: str | None = None):
+                  prev_id: str | None = None, next_id: str | None = None,
+                  encrypted: bool = False, encryption_iv: str = ""):
         self.conn.execute(
             """INSERT OR REPLACE INTO nodes
-               (id, chain_id, seq, text, text_prefix, prev_id, next_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (id, chain_id, seq, text, text_prefix, prev_id, next_id, encrypted, encryption_iv)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (node_id, chain_id, seq, text, text[:3],
-             prev_id, next_id),
+             prev_id, next_id, 1 if encrypted else 0, encryption_iv),
         )
         self.conn.commit()
 
@@ -126,7 +139,7 @@ class SQLiteStore:
     def get_all_nodes_with_embeddings_dense(self) -> list[dict]:
         """返回所有节点（不含 embedding，由上层加载）"""
         rows = self.conn.execute(
-            "SELECT id, chain_id, seq, text, prev_id, next_id FROM nodes ORDER BY seq"
+            "SELECT id, chain_id, seq, text, prev_id, next_id, encrypted, encryption_iv FROM nodes ORDER BY seq"
         ).fetchall()
         return [dict(r) for r in rows]
 

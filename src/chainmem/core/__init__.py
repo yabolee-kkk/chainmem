@@ -17,10 +17,15 @@ class ChainNode:
     embedding: np.ndarray | None = None  # shape=(d,)，运行时内存中
     prev_id: str | None = None
     next_id: str | None = None
+    encrypted: bool = False  # text 是否为加密密文
+    encryption_iv: str = ""  # 加密 IV（用于非 Fernet 解密场景）
 
     @property
     def text_prefix(self) -> str:
-        return self.text[:3] if len(self.text) >= 3 else self.text
+        """前 3 字符前缀（加密节点用明文的前 3 字符）"""
+        return self.text[:3] if len(self.text) >= 3 and not self.encrypted else (
+            "🔒"  # 加密节点前缀显示为锁
+        )
 
 
 @dataclass

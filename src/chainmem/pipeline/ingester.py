@@ -3,7 +3,7 @@
 from __future__ import annotations
 import re
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -12,6 +12,7 @@ from chainmem.store.sqlite_store import SQLiteStore
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
+    from chainmem.core.crypto import Encryptor
 
 
 # 全局复用嵌入模型（加载一次即可）
@@ -105,11 +106,13 @@ def merge_short_chunks(chunks: list[str], min_chars: int = 6) -> list[str]:
 class Ingester:
     """结链器：文本 → 链"""
 
-    def __init__(self, store: SQLiteStore):
+    def __init__(self, store: SQLiteStore, encryptor: Optional["Encryptor"] = None):
         self.store = store
         self.embedder = _get_model()
+        self.encryptor = encryptor
 
-    def ingest(self, text: str, source: str = "", tags: list[str] | None = None) -> Chain:
+    def ingest(self, text: str, source: str = "", tags: list[str] | None = None,
+               force_encrypt: bool = False) -> Chain:
         chunks = chunk_text(text)
         if not chunks:
             raise ValueError("Empty text after chunking")
@@ -117,20 +120,38 @@ class Ingester:
         chain_id = str(uuid.uuid4())
         nodes: list[ChainNode] = []
 
-        # 1. 嵌入所有块
+        # 1. 原始文本凭证检测（在切块前，避免 token 被切碎后无法匹配）
+        from chainmem.core.crypto import detect_credential
+        text_has_credential = force_encrypt or (
+            self.encryptor is not None and self.encryptor.available
+            and detect_credential(text)
+        )
+
+        # 2. 嵌入所有块（用原始文本嵌入，再用密文存储）
         embeddings = self.embedder.encode(chunks, normalize_embeddings=True)
 
-        # 2. 创建节点，串联
+        # 3. 创建节点，串联（自动检测凭证并加密）
         prev_id: str | None = None
         for i, (phrase_text, emb) in enumerate(zip(chunks, embeddings)):
             node_id = str(uuid.uuid4())
+
+            encrypted = False
+            encryption_iv = ""
+            stored_text = phrase_text  # 默认不加密
+
+            if text_has_credential and self.encryptor is not None:
+                stored_text, encryption_iv = self.encryptor.encrypt(phrase_text)
+                encrypted = True
+
             node = ChainNode(
                 id=node_id,
                 chain_id=chain_id,
                 seq=i + 1,
-                text=phrase_text,
+                text=stored_text,
                 embedding=emb,
                 prev_id=prev_id,
+                encrypted=encrypted,
+                encryption_iv=encryption_iv,
             )
             if prev_id:
                 # 更新前一个节点的 next_id
@@ -159,6 +180,8 @@ class Ingester:
                 text=n.text,
                 prev_id=n.prev_id,
                 next_id=n.next_id,
+                encrypted=n.encrypted,
+                encryption_iv=n.encryption_iv,
             )
 
         chain = Chain.from_nodes(nodes)

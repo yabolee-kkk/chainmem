@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from chainmem.store.sqlite_store import SQLiteStore
 if TYPE_CHECKING:
     import faiss
     from sentence_transformers import SentenceTransformer
+    from chainmem.core.crypto import Encryptor
 
 # ── FAISS 索引持久化路径 ──
 INDEX_DIR = os.path.expanduser("~/.chainmem")
@@ -47,16 +48,19 @@ def _get_model():
 class Retriever:
     """追溯器：查询 → 链遍历"""
 
-    def __init__(self, store: SQLiteStore):
+    def __init__(self, store: SQLiteStore, encryptor: Optional["Encryptor"] = None):
         self.store = store
         self._embedder = None
-        self.index = None  # faiss.Index | None — 惰性导入
+        self.encryptor = encryptor
+        self.index = None  # faiss.Index — 惰性导入
         self.id_to_text: dict[str, str] = {}       # node_id → text
         self.id_to_chain: dict[str, str] = {}       # node_id → chain_id
         self.id_to_next: dict[str, str | None] = {}  # node_id → next_id
         self.id_to_seq: dict[str, int] = {}         # node_id → seq
         self.id_list: list[str] = []                # idx → node_id
         self.chain_tags: dict[str, list[str]] = {}  # chain_id → tags
+        self.id_to_encrypted: dict[str, bool] = {}   # node_id → encrypted flag
+        self.id_to_encryption_iv: dict[str, str] = {}  # node_id → encryption IV
 
     def _get_embedder(self):
         """惰性获取嵌入模型"""
@@ -83,6 +87,8 @@ class Retriever:
                 "id_to_seq": self.id_to_seq,
                 "id_list": self.id_list,
                 "chain_tags": self.chain_tags,
+                "id_to_encrypted": self.id_to_encrypted,
+                "id_to_encryption_iv": self.id_to_encryption_iv,
             }, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     def load_index(self) -> bool:
@@ -100,6 +106,8 @@ class Retriever:
             self.id_to_seq = meta["id_to_seq"]
             self.id_list = meta["id_list"]
             self.chain_tags = meta["chain_tags"]
+            self.id_to_encrypted = meta.get("id_to_encrypted", {})  # 向后兼容
+            self.id_to_encryption_iv = meta.get("id_to_encryption_iv", {})
             return True
         except Exception as e:
             print(f"[chainmem] 加载 FAISS 索引失败，将重建: {e}", file=__import__("sys").stderr)
@@ -114,7 +122,9 @@ class Retriever:
                   texts: list[str],
                   chain_ids: list[str],
                   next_ids: list[str | None],
-                  seqs: list[int]):
+                  seqs: list[int],
+                  encrypted_flags: list[bool] | None = None,
+                  encryption_ivs: list[str] | None = None):
         """增量添加节点到 FAISS 索引（无需全量重建）"""
         import faiss
         dim = embeddings.shape[1]
@@ -132,6 +142,10 @@ class Retriever:
             self.id_to_chain[nid] = chain_ids[i]
             self.id_to_next[nid] = next_ids[i]
             self.id_to_seq[nid] = seqs[i]
+            if encrypted_flags:
+                self.id_to_encrypted[nid] = encrypted_flags[i]
+            if encryption_ivs:
+                self.id_to_encryption_iv[nid] = encryption_ivs[i]
 
         # 持久化到磁盘
         self.save_index()
@@ -179,6 +193,8 @@ class Retriever:
         self.id_to_chain.clear()
         self.id_to_next.clear()
         self.id_to_seq.clear()
+        self.id_to_encrypted.clear()
+        self.id_to_encryption_iv.clear()
 
         for row in rows:
             nid = row["id"]
@@ -186,6 +202,8 @@ class Retriever:
             self.id_to_chain[nid] = row["chain_id"]
             self.id_to_next[nid] = row["next_id"]
             self.id_to_seq[nid] = row["seq"]
+            self.id_to_encrypted[nid] = bool(row.get("encrypted", 0))
+            self.id_to_encryption_iv[nid] = row.get("encryption_iv", "") or ""
 
         # 重新嵌入所有文本
         texts = [self.id_to_text[nid] for nid in (r["id"] for r in rows)]
@@ -292,9 +310,11 @@ class Retriever:
         """纯子串匹配兜底：当语义搜索低于阈值时使用"""
         if not query:
             return []
-        # 查找包含查询文本的节点
+        # 查找包含查询文本的节点（加密节点自动解密后匹配）
         matched_ids = []
-        for nid, text in self.id_to_text.items():
+        found_encrypted_no_key = False
+        for nid in self.id_to_text:
+            text = self._get_text(nid)
             if query in text:
                 # 标签过滤
                 if tags:
@@ -303,11 +323,35 @@ class Retriever:
                     if not any(t in node_tags for t in tags):
                         continue
                 matched_ids.append(nid)
+            elif self.id_to_encrypted.get(nid, False) and (
+                self.encryptor is None or not self.encryptor.available
+            ):
+                found_encrypted_no_key = True
         if not matched_ids:
+            if found_encrypted_no_key:
+                return ["[🔒 存在匹配的加密记忆，请配置 CHAINMEM_KEY 解密]"]
             return []
         # 选第一条匹配链的第一个节点开始遍历
         start_id = matched_ids[0]
         return self._traverse_forward(start_id, 100)
+
+    def _get_text(self, node_id: str) -> str:
+        """获取节点文本，加密时透明解密"""
+        text = self.id_to_text.get(node_id, "")
+        if not text:
+            return text
+        encrypted = self.id_to_encrypted.get(node_id, False)
+        if not encrypted:
+            return text
+        # 加密节点：尝试解密
+        if self.encryptor is not None and self.encryptor.available:
+            try:
+                iv = self.id_to_encryption_iv.get(node_id, "")
+                return self.encryptor.decrypt(text, iv)
+            except Exception:
+                return "[🔒 加密内容（解密失败）]"
+        else:
+            return "[🔒 加密内容（需配置 CHAINMEM_KEY）]"
 
     def _traverse_forward(self, start_id: str, max_steps: int) -> list[str]:
         """从 start_id 开始，沿 next_id 向前遍历"""
@@ -320,7 +364,7 @@ class Retriever:
                 break
             visited.add(current_id)
 
-            text = self.id_to_text.get(current_id)
+            text = self._get_text(current_id)
             if text is None:
                 break
             texts.append(text)

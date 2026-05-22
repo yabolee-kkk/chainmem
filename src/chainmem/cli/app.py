@@ -1,6 +1,7 @@
 """ChainMem CLI"""
 
 import json
+import os
 import sys
 import traceback
 import asyncio
@@ -223,6 +224,161 @@ def serve(
             await server.serve_forever()
 
     asyncio.run(server_main())
+
+
+# ── 安全命令 ─────────────────────────────────────
+
+secure_app = typer.Typer(help="加密密钥管理")
+app.add_typer(secure_app, name="secure")
+
+
+@secure_app.command("init")
+def secure_init(
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """初始化加密密钥（生成并保存到 ~/.chainmem/secret.key）
+    
+    首次运行生成密钥，之后可用 chainmem secure status 查看状态。
+    也可设置 CHAINMEM_KEY 环境变量覆盖文件密钥。
+    """
+    from chainmem.core.crypto import generate_key, save_key_to_file, KEY_FILE
+
+    key_path = Path(KEY_FILE)
+    if key_path.exists():
+        rprint(Panel(
+            f"[yellow]⚠ 密钥文件已存在: {KEY_FILE}[/yellow]\n"
+            f"如需重新生成，请先删除：rm {KEY_FILE}\n"
+            f"警告：重新生成会无法解密之前加密的节点！",
+            title="ChainMem Secure",
+        ))
+        raise typer.Exit(1)
+
+    key = generate_key()
+    path = save_key_to_file(key)
+    rprint(Panel(
+        f"[bold green]✓ 密钥已生成[/bold green]\n\n"
+        f"文件: {path}\n"
+        f"长度: 44 字符（Fernet 标准密钥）\n\n"
+        f"[bold]也可设置环境变量覆盖：[/bold]\n"
+        f"  export CHAINMEM_KEY={key}\n\n"
+        f"[dim]提示：将上述 export 加入 ~/.bashrc 以便每次自动加载[/dim]",
+        title="ChainMem Secure",
+    ))
+
+
+@secure_app.command("status")
+def secure_status(
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """查看加密状态：密钥是否配置、加密节点统计"""
+    from chainmem.core.crypto import KEY_FILE, ENV_VAR
+
+    key_env = os.environ.get(ENV_VAR)
+    key_file = Path(KEY_FILE)
+
+    # 密钥状态
+    env_ok = "✅ 已设置" if key_env else "❌ 未设置"
+    file_ok = "✅ 已存在" if key_file.exists() else "❌ 不存在"
+
+    # 统计加密节点
+    cm = _get_cm(db)
+    rows = cm.store.conn.execute(
+        "SELECT COUNT(*) as total, SUM(encrypted) as encrypted FROM nodes"
+    ).fetchone()
+    total_nodes = rows["total"] or 0
+    encrypted_count = rows["encrypted"] or 0
+    cm.close()
+
+    table = Table(title="ChainMem 加密状态")
+    table.add_column("项目", style="cyan")
+    table.add_column("状态", style="green")
+    table.add_row("CHAINMEM_KEY 环境变量", env_ok)
+    table.add_row(f"密钥文件 ({KEY_FILE})", file_ok)
+    table.add_row("数据库", db)
+    table.add_row("节点总数", str(total_nodes))
+    table.add_row("加密节点数", f"[bold]{encrypted_count}[/bold]")
+    if total_nodes > 0:
+        pct = encrypted_count / total_nodes * 100
+        table.add_row("加密率", f"{pct:.1f}%")
+    console.print(table)
+
+    if not key_env and not key_file.exists():
+        rprint("\n[yellow]💡 运行 chainmem secure init 生成密钥[/yellow]")
+
+
+@secure_app.command("encrypt")
+def secure_encrypt(
+    node_id: str = typer.Argument(..., help="要加密的节点 ID"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """手动加密指定节点（强制加密，不检查凭证模式）"""
+    from chainmem.core.crypto import Encryptor
+
+    encryptor = Encryptor()
+    if not encryptor.available:
+        rprint("[red]❌ 加密器未就绪，请先运行 chainmem secure init[/red]")
+        raise typer.Exit(1)
+
+    cm = _get_cm(db)
+    node = cm.store.get_node(node_id)
+    if node is None:
+        rprint(f"[red]❌ 节点 {node_id} 不存在[/red]")
+        raise typer.Exit(1)
+
+    if node.get("encrypted"):
+        rprint(f"[yellow]⚠ 节点 {node_id} 已加密，跳过[/yellow]")
+        cm.close()
+        return
+
+    plaintext = node["text"]
+    ciphertext, iv = encryptor.encrypt(plaintext)
+    cm.store.conn.execute(
+        "UPDATE nodes SET text = ?, encrypted = 1, encryption_iv = ?, text_prefix = '🔒' WHERE id = ?",
+        (ciphertext, iv, node_id),
+    )
+    cm.store.conn.commit()
+    cm.close()
+
+    rprint(f"[bold green]✓ 节点 {node_id[:8]}... 已加密[/bold green]")
+
+
+@secure_app.command("decrypt")
+def secure_decrypt(
+    node_id: str = typer.Argument(..., help="要解密的节点 ID"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+    show: bool = typer.Option(False, "--show", "-s", help="显示解密后的原文"),
+):
+    """手动解密指定节点"""
+    from chainmem.core.crypto import Encryptor
+
+    encryptor = Encryptor()
+    if not encryptor.available:
+        rprint("[red]❌ 加密器未就绪[/red]")
+        raise typer.Exit(1)
+
+    cm = _get_cm(db)
+    node = cm.store.get_node(node_id)
+    if node is None:
+        rprint(f"[red]❌ 节点 {node_id} 不存在[/red]")
+        raise typer.Exit(1)
+
+    if not node.get("encrypted"):
+        rprint(f"[yellow]⚠ 节点 {node_id} 未加密，无需解密[/yellow]")
+        cm.close()
+        return
+
+    plaintext = encryptor.decrypt(node["text"], node.get("encryption_iv", ""))
+    cm.store.conn.execute(
+        "UPDATE nodes SET text = ?, encrypted = 0, encryption_iv = '', text_prefix = ? WHERE id = ?",
+        (plaintext, plaintext[:3], node_id),
+    )
+    cm.store.conn.commit()
+
+    result = f"[bold green]✓ 节点 {node_id[:8]}... 已解密[/bold green]"
+    if show:
+        result += f"\n\n[bold]原文:[/bold]\n{plaintext}"
+    rprint(result)
+    cm.close()
 
 
 # ── MCP 共享逻辑 ──
