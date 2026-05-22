@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chainmem"
-version = "0.3.0"
+version = "0.4.0"
 description = "ChainMem（链忆）— 链式 + 向量混合记忆系统，让 AI 拥有像人一样的联想式回忆"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,10 +22,18 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "sentence-transformers>=3.0",
-    "faiss-cpu>=1.8",
     "typer>=0.12",
     "rich>=13.0",
+]
+
+[project.optional-dependencies]
+full = [
+    "sentence-transformers>=3.0",
+    "faiss-cpu>=1.8",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
 ]
 
 [project.urls]
@@ -35,9 +43,3 @@ Documentation = "https://github.com/yabolee-kkk/chainmem#readme"
 
 [project.scripts]
 chainmem = "chainmem.cli.app:app"
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-]

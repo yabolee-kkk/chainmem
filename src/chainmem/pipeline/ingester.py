@@ -3,12 +3,15 @@
 from __future__ import annotations
 import re
 import uuid
+from typing import TYPE_CHECKING
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from chainmem.core.node import ChainNode, Chain
 from chainmem.store.sqlite_store import SQLiteStore
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 # 全局复用嵌入模型（加载一次即可）
@@ -16,8 +19,23 @@ _MODEL: SentenceTransformer | None = None
 _MODEL_NAME: str = "all-MiniLM-L6-v2"
 
 
-def _get_model(model_name: str | None = None) -> SentenceTransformer:
+def _get_model(model_name: str | None = None):
+    """获取/加载嵌入模型。惰性导入，缺失时给出安装指引"""
     global _MODEL, _MODEL_NAME
+
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        print(
+            "❌ ChainMem 需要 sentence-transformers 来进行语义嵌入。\n"
+            "   安装方法：pip install chainmem[full]\n"
+            "   或者手动安装：pip install sentence-transformers faiss-cpu\n"
+            "   也可自行下载：https://pypi.org/project/sentence-transformers/\n"
+            "               https://pypi.org/project/faiss-cpu/\n",
+            file=__import__("sys").stderr,
+        )
+        raise
+
     if model_name is not None and model_name != _MODEL_NAME:
         # 切换模型
         _MODEL = SentenceTransformer(model_name)

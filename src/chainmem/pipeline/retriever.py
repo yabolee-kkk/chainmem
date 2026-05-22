@@ -4,13 +4,16 @@ from __future__ import annotations
 import json
 import os
 import pickle
+from typing import TYPE_CHECKING
 
 import numpy as np
-import faiss
-from sentence_transformers import SentenceTransformer
 
 from chainmem.core.node import ChainNode
 from chainmem.store.sqlite_store import SQLiteStore
+
+if TYPE_CHECKING:
+    import faiss
+    from sentence_transformers import SentenceTransformer
 
 # ── FAISS 索引持久化路径 ──
 INDEX_DIR = os.path.expanduser("~/.chainmem")
@@ -19,15 +22,26 @@ FAISS_META_PATH = os.path.join(INDEX_DIR, "faiss_metadata.pkl")
 
 
 # 复用嵌入模型
-_MODEL: SentenceTransformer | None = None
 
 
-def _get_model() -> SentenceTransformer:
-    global _MODEL
-    if _MODEL is None:
+def _get_model():
+    """获取嵌入模型，缺失时给出安装指引"""
+    try:
         from chainmem.pipeline.ingester import _get_model as _ig
         return _ig()
-    return _MODEL
+    except ImportError:
+        print(
+            "❌ ChainMem 需要 sentence-transformers + faiss-cpu 来进行语义嵌入。\n"
+            "   安装方法：pip install chainmem[full]\n"
+            "   或手动安装：\n"
+            "     pip install sentence-transformers\n"
+            "     pip install faiss-cpu\n"
+            "   下载地址：\n"
+            "     https://pypi.org/project/sentence-transformers/\n"
+            "     https://pypi.org/project/faiss-cpu/\n",
+            file=__import__("sys").stderr,
+        )
+        raise
 
 
 class Retriever:
@@ -35,14 +49,20 @@ class Retriever:
 
     def __init__(self, store: SQLiteStore):
         self.store = store
-        self.embedder = _get_model()
-        self.index: faiss.Index | None = None
+        self._embedder = None
+        self.index = None  # faiss.Index | None — 惰性导入
         self.id_to_text: dict[str, str] = {}       # node_id → text
         self.id_to_chain: dict[str, str] = {}       # node_id → chain_id
         self.id_to_next: dict[str, str | None] = {}  # node_id → next_id
         self.id_to_seq: dict[str, int] = {}         # node_id → seq
         self.id_list: list[str] = []                # idx → node_id
         self.chain_tags: dict[str, list[str]] = {}  # chain_id → tags
+
+    def _get_embedder(self):
+        """惰性获取嵌入模型"""
+        if self._embedder is None:
+            self._embedder = _get_model()
+        return self._embedder
 
     # ──────────────────────────────────────────
     # FAISS 索引持久化
@@ -52,6 +72,7 @@ class Retriever:
         """将 FAISS 索引 + 元数据保存到磁盘"""
         if self.index is None or self.index.ntotal == 0:
             return
+        import faiss
         os.makedirs(INDEX_DIR, exist_ok=True)
         faiss.write_index(self.index, FAISS_INDEX_PATH)
         with open(FAISS_META_PATH, "wb") as f:
@@ -69,6 +90,7 @@ class Retriever:
         if not os.path.exists(FAISS_INDEX_PATH) or not os.path.exists(FAISS_META_PATH):
             return False
         try:
+            import faiss
             self.index = faiss.read_index(FAISS_INDEX_PATH)
             with open(FAISS_META_PATH, "rb") as f:
                 meta = pickle.load(f)
@@ -94,6 +116,7 @@ class Retriever:
                   next_ids: list[str | None],
                   seqs: list[int]):
         """增量添加节点到 FAISS 索引（无需全量重建）"""
+        import faiss
         dim = embeddings.shape[1]
         if self.index is None:
             self.index = faiss.IndexFlatIP(dim)
@@ -166,7 +189,8 @@ class Retriever:
 
         # 重新嵌入所有文本
         texts = [self.id_to_text[nid] for nid in (r["id"] for r in rows)]
-        embeddings = self.embedder.encode(texts, normalize_embeddings=True)
+        import faiss
+        embeddings = self._get_embedder().encode(texts, normalize_embeddings=True)
 
         dim = embeddings.shape[1]
         self.index = faiss.IndexFlatIP(dim)
@@ -213,7 +237,7 @@ class Retriever:
             query = raw_query
 
         # ── Step 1: FAISS 语义搜索 ──
-        q_vec = self.embedder.encode([query], normalize_embeddings=True).astype(np.float32)
+        q_vec = self._get_embedder().encode([query], normalize_embeddings=True).astype(np.float32)
 
         top_k = min(10, self.index.ntotal)
         scores, indices = self.index.search(q_vec, top_k)
