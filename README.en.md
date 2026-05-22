@@ -74,9 +74,69 @@ Search "stock" → find chain head → traverse pointers → full conversation r
 
 ## ⚡ Quick Start
 
+### Installation
+
+ChainMem uses a **layered dependency** design — choose what fits your needs:
+
+| Level | Command | Size | Features |
+|:------|:--------|:----:|:---------|
+| 🪶 **Core** | `pip install chainmem` | **~2 MB** | CLI, SQLite storage, text search |
+| 🔥 **Full** | `pip install chainmem[full]` | ~1.5~2 GB | Above + semantic search (sentence-transformers + faiss-cpu) |
+| 🐍 **Source** | `git clone ... && pip install -e .` | ~20 KB code | Install deps yourself |
+
+> **💡 Tip:** Start with core to try it out. Install the full version when you need semantic search.
+
+#### 🪶 Core (recommended for first try)
+
 ```bash
 pip install chainmem
 ```
+
+Downloads in seconds. Supports:
+- Full CLI (ingest / retrieve / stats / serve)
+- SQLite persistence
+- FTS5 text search
+- MCP server
+- **Semantic search requires additional deps (see below)**
+
+#### 🔥 Full (enables semantic search)
+
+```bash
+pip install chainmem[full]
+```
+
+Auto-installs sentence-transformers and faiss-cpu (~1.5~2 GB). Adds:
+- FAISS vector semantic search
+- High-precision hybrid retrieval (semantic + substring + tags)
+
+#### 📦 Manual dependency install
+
+If your network is slow or you want to control versions:
+
+```bash
+pip install chainmem
+pip install sentence-transformers>=3.0
+pip install faiss-cpu>=1.8
+```
+
+Download URLs (for offline install):
+
+| Dependency | PyPI URL | Size |
+|:-----------|:---------|:----:|
+| sentence-transformers | https://pypi.org/project/sentence-transformers/ | ~500 MB |
+| faiss-cpu | https://pypi.org/project/faiss-cpu/ | ~30 MB |
+| transformers | https://pypi.org/project/transformers/ | ~300 MB |
+| torch | https://pypi.org/project/torch/ | ~800 MB |
+
+```bash
+# Offline install example
+pip install sentence_transformers-3.x.x-py3-none-any.whl
+pip install faiss_cpu-1.x.x-cp311-cp311-manylinux_2_17_x86_64.whl
+```
+
+> **Note:** Calling `ingest()` or `retrieve()` without the full deps will print installation instructions. CLI basics and MCP server work fine with just the core.
+
+### Python SDK
 
 ```python
 from chainmem import ChainMemory
