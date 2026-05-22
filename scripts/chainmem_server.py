@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""ChainMem 持久化 MCP 服务 - 最小化实现"""
-import asyncio, json, os, sys, uuid
+"""ChainMem 持久化 MCP 服务 - 异步非阻塞版"""
+import asyncio, json, os, sys, functools
 sys.path.insert(0, os.path.expanduser("~/chainmem/src"))
 
 from chainmem import ChainMemory
@@ -11,17 +11,25 @@ SOCKET = "/tmp/chainmem.sock"
 # 持久化连接（模型在模块级只加载一次）
 _cm = None
 
+
 def get_cm():
     global _cm
     if _cm is None:
         _cm = ChainMemory(db_path=DB).open()
-        _cm.retriever.rebuild_index()
+        # 优先从磁盘加载 FAISS 索引，失败才全量重建
+        loaded = _cm.retriever.load_index()
+        if loaded:
+            print("FAISS 索引从磁盘加载完成", file=sys.stderr)
+        else:
+            print("磁盘无缓存索引，全量重建...", file=sys.stderr)
+            _cm.retriever.rebuild_index()
     return _cm
 
 
 async def handle(reader, writer):
     addr = writer.get_extra_info("peername")
     cm = get_cm()
+    loop = asyncio.get_running_loop()
     try:
         while True:
             line = await asyncio.wait_for(reader.readline(), timeout=30)
@@ -74,6 +82,7 @@ async def handle(reader, writer):
                     writer.write((json.dumps(resp) + "\n").encode())
 
                 elif tool == "chainmem_retrieve":
+                    # 检索很快（~22ms），直接在 async 协程中执行
                     query = args.get("query", "")
                     tags_str = args.get("tags", "")
                     tag_list = [t.strip() for t in tags_str.split(",") if t.strip()]
@@ -84,11 +93,29 @@ async def handle(reader, writer):
                     writer.write((json.dumps(resp) + "\n").encode())
 
                 elif tool == "chainmem_ingest":
+                    # ★ 在线程池中执行 ingest（CPU 密集：切块 + 编码），不阻塞服务器
                     text = args.get("text", "")
                     source = args.get("source", "")
                     tags = [t.strip() for t in args.get("tags", "").split(",") if t.strip()]
-                    chain = cm.ingest(text, source=source, tags=tags)
-                    cm.retriever.rebuild_index()
+
+                    def _do_ingest():
+                        chain = cm.ingest(text, source=source, tags=tags)
+                        # 增量添加到 FAISS 索引（无需全量重建）
+                        nodes = chain.nodes
+                        if nodes:
+                            embeddings = np.array([n.embedding for n in nodes])
+                            cm.retriever.add_nodes(
+                                embeddings=embeddings,
+                                node_ids=[n.id for n in nodes],
+                                texts=[n.text for n in nodes],
+                                chain_ids=[n.chain_id for n in nodes],
+                                next_ids=[n.next_id for n in nodes],
+                                seqs=[n.seq for n in nodes],
+                            )
+                        return chain
+
+                    import numpy as np
+                    chain = await loop.run_in_executor(None, _do_ingest)
                     resp = {"jsonrpc": "2.0", "id": rid,
                             "result": {"content": [{"type": "text",
                                                      "text": f"结链成功：{chain.node_count} 个节点，前缀「{chain.anchor_prefix}」"}]}}
@@ -131,7 +158,7 @@ async def handle(reader, writer):
 async def main():
     if os.path.exists(SOCKET):
         os.unlink(SOCKET)
-    # 预加载
+    # 预加载（在 main() 同步阶段完成，不阻塞 accept）
     print("正在加载嵌入模型...", file=sys.stderr)
     cm = get_cm()
     print(f"模型就绪！{cm.stats()['nodes']} 个节点", file=sys.stderr)
@@ -141,6 +168,7 @@ async def main():
     print(f"服务启动: {SOCKET}", file=sys.stderr)
     async with server:
         await server.serve_forever()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

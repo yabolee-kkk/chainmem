@@ -12,6 +12,11 @@ from sentence_transformers import SentenceTransformer
 from chainmem.core.node import ChainNode
 from chainmem.store.sqlite_store import SQLiteStore
 
+# ── FAISS 索引持久化路径 ──
+INDEX_DIR = os.path.expanduser("~/.chainmem")
+FAISS_INDEX_PATH = os.path.join(INDEX_DIR, "faiss_index.bin")
+FAISS_META_PATH = os.path.join(INDEX_DIR, "faiss_metadata.pkl")
+
 
 # 复用嵌入模型
 _MODEL: SentenceTransformer | None = None
@@ -39,20 +44,103 @@ class Retriever:
         self.id_list: list[str] = []                # idx → node_id
         self.chain_tags: dict[str, list[str]] = {}  # chain_id → tags
 
-    def rebuild_index(self):
-        """从 SQLite 重建 FAISS 索引和映射表（每次 ingest 后调用）
+    # ──────────────────────────────────────────
+    # FAISS 索引持久化
+    # ──────────────────────────────────────────
 
-        轻量跳过：如果节点数没变，跳过重建（serve 常驻模式优化）
+    def save_index(self):
+        """将 FAISS 索引 + 元数据保存到磁盘"""
+        if self.index is None or self.index.ntotal == 0:
+            return
+        os.makedirs(INDEX_DIR, exist_ok=True)
+        faiss.write_index(self.index, FAISS_INDEX_PATH)
+        with open(FAISS_META_PATH, "wb") as f:
+            pickle.dump({
+                "id_to_text": self.id_to_text,
+                "id_to_chain": self.id_to_chain,
+                "id_to_next": self.id_to_next,
+                "id_to_seq": self.id_to_seq,
+                "id_list": self.id_list,
+                "chain_tags": self.chain_tags,
+            }, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load_index(self) -> bool:
+        """从磁盘加载 FAISS 索引 + 元数据。成功返回 True"""
+        if not os.path.exists(FAISS_INDEX_PATH) or not os.path.exists(FAISS_META_PATH):
+            return False
+        try:
+            self.index = faiss.read_index(FAISS_INDEX_PATH)
+            with open(FAISS_META_PATH, "rb") as f:
+                meta = pickle.load(f)
+            self.id_to_text = meta["id_to_text"]
+            self.id_to_chain = meta["id_to_chain"]
+            self.id_to_next = meta["id_to_next"]
+            self.id_to_seq = meta["id_to_seq"]
+            self.id_list = meta["id_list"]
+            self.chain_tags = meta["chain_tags"]
+            return True
+        except Exception as e:
+            print(f"[chainmem] 加载 FAISS 索引失败，将重建: {e}", file=__import__("sys").stderr)
+            return False
+
+    # ──────────────────────────────────────────
+    # 增量节点添加（ingest 后只编新节点）
+    # ──────────────────────────────────────────
+
+    def add_nodes(self, embeddings: np.ndarray,
+                  node_ids: list[str],
+                  texts: list[str],
+                  chain_ids: list[str],
+                  next_ids: list[str | None],
+                  seqs: list[int]):
+        """增量添加节点到 FAISS 索引（无需全量重建）"""
+        dim = embeddings.shape[1]
+        if self.index is None:
+            self.index = faiss.IndexFlatIP(dim)
+        elif self.index.d != dim:
+            # 不匹配？重建
+            self.rebuild_index(force=True)
+            return
+
+        self.index.add(embeddings.astype(np.float32))
+        for i, nid in enumerate(node_ids):
+            self.id_list.append(nid)
+            self.id_to_text[nid] = texts[i]
+            self.id_to_chain[nid] = chain_ids[i]
+            self.id_to_next[nid] = next_ids[i]
+            self.id_to_seq[nid] = seqs[i]
+
+        # 持久化到磁盘
+        self.save_index()
+
+    # ──────────────────────────────────────────
+    # 索引重建（首次启动 / 回退）
+    # ──────────────────────────────────────────
+
+    def rebuild_index(self, force: bool = False):
+        """从 SQLite 重建 FAISS 索引和映射表（带磁盘缓存 + 增量跳过）
+
+        启动顺序：
+          1. 如果磁盘有持久化索引且节点数匹配 → 直接加载（~1s）
+          2. 否则从 SQLite 全量重建 → 存盘
         """
         rows = self.store.get_all_nodes_with_embeddings_dense()
         if not rows:
             self.index = None
             return
 
-        # 快速跳过：如果节点数没变且索引已存在，不重建
-        if self.index is not None and self.index.ntotal > 0:
+        # 快速跳过：节点数没变且索引已存在
+        if not force and self.index is not None and self.index.ntotal > 0:
             if len(rows) == len(self.id_list):
                 return
+
+        # 尝试从磁盘加载
+        if not force and self.load_index():
+            if len(rows) == len(self.id_list):
+                return
+            # 节点数变了 → 全量重建
+            print(f"[chainmem] 节点数变动 ({len(self.id_list)} → {len(rows)})，重建索引",
+                  file=__import__("sys").stderr)
 
         # 加载链标签
         self.chain_tags.clear()
@@ -84,6 +172,13 @@ class Retriever:
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(embeddings.astype(np.float32))
         self.id_list = [r["id"] for r in rows]
+
+        # 持久化到磁盘
+        self.save_index()
+
+    # ──────────────────────────────────────────
+    # 检索
+    # ──────────────────────────────────────────
 
     def retrieve(self, query: str, max_steps: int = 100,
                  tags: list[str] | None = None) -> list[str]:

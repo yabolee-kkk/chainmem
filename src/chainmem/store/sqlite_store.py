@@ -15,7 +15,7 @@ class SQLiteStore:
         self.conn: sqlite3.Connection | None = None
 
     def initialize(self):
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
