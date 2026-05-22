@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/logo.svg" width="200" alt="ChainMem Logo">
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/github/v/release/yabolee-kkk/chainmem" alt="GitHub Release">
@@ -119,6 +123,8 @@ chainmem serve --socket /tmp/chainmem.sock
 ## 🔬 How It Works
 
 ### Ingestion
+
+![ChainMem Architecture](assets/architecture-preview.png)
 
 ```
   Raw Text
