@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chainmem"
-version = "0.5.0"
+version = "0.5.1"
 description = "ChainMem（链忆）— 链式 + 向量混合记忆系统，让 AI 拥有像人一样的联想式回忆"
 readme = "README.md"
 requires-python = ">=3.10"
