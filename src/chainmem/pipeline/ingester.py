@@ -29,8 +29,10 @@ def _get_model(model_name: str | None = None):
     except ImportError:
         print(
             "❌ ChainMem 需要 sentence-transformers 来进行语义嵌入。\n"
-            "   安装方法：pip install chainmem[full]\n"
-            "   或者手动安装：pip install sentence-transformers faiss-cpu\n"
+            "   安装方法：\n"
+            "     完整版（含 GPU torch，~1.5GB）：pip install chainmem[full]\n"
+            "     CPU 版（轻量，192MB）：pip install torch --index-url https://download.pytorch.org/whl/cpu\n"
+            "                           pip install sentence-transformers faiss-cpu\n"
             "   也可自行下载：https://pypi.org/project/sentence-transformers/\n"
             "               https://pypi.org/project/faiss-cpu/\n",
             file=__import__("sys").stderr,
@@ -40,8 +42,21 @@ def _get_model(model_name: str | None = None):
     if model_name is not None and model_name != _MODEL_NAME:
         # 切换模型
         _MODEL = SentenceTransformer(model_name)
-        _MODEL_NAME = model_name
     elif _MODEL is None:
+        try:
+            _MODEL = SentenceTransformer(_MODEL_NAME)
+        except Exception as e:
+            if "Connection" in str(e) or "timeout" in str(e).lower() or "503" in str(e):
+                print(
+                    "🌐 模型下载失败，可能是网络问题。\n"
+                    "   尝试使用 HuggingFace 国内镜像：\n"
+                    "     export HF_ENDPOINT=https://hf-mirror.com\n"
+                    "   然后重新运行。\n"
+                    "   或手动下载模型到缓存：\n"
+                    "     huggingface-cli download sentence-transformers/all-MiniLM-L6-v2\n",
+                    file=__import__("sys").stderr,
+                )
+            raise
         _MODEL = SentenceTransformer(_MODEL_NAME)
     return _MODEL
 

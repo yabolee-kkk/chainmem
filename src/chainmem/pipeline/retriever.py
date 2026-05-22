@@ -33,10 +33,10 @@ def _get_model():
     except ImportError:
         print(
             "❌ ChainMem 需要 sentence-transformers + faiss-cpu 来进行语义嵌入。\n"
-            "   安装方法：pip install chainmem[full]\n"
-            "   或手动安装：\n"
-            "     pip install sentence-transformers\n"
-            "     pip install faiss-cpu\n"
+            "   安装方法：\n"
+            "     完整版（含 GPU torch，~1.5GB）：pip install chainmem[full]\n"
+            "     CPU 版（轻量，192MB）：pip install torch --index-url https://download.pytorch.org/whl/cpu\n"
+            "                           pip install sentence-transformers faiss-cpu\n"
             "   下载地址：\n"
             "     https://pypi.org/project/sentence-transformers/\n"
             "     https://pypi.org/project/faiss-cpu/\n",

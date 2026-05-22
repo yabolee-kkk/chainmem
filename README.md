@@ -83,12 +83,21 @@ ChainMem 用**链式结构**模拟人脑的联想回忆：
 ChainMem 采用**分层依赖**设计，你可以按需选择安装方式：
 
 | 安装方式 | 命令 | 大小 | 功能 |
-|:---------|:-----|:----:|:-----|
-| 🪶 **核心版** | `pip install chainmem` | **~2 MB** | CLI 管理、SQLite 存储、纯文本检索 |
-| 🔥 **完整版** | `pip install chainmem[full]` | ~1.5~2 GB | 以上 + 语义搜索（sentence-transformers + faiss-cpu） |
+|:--------|:-----|:---|:-----|
+| 🪶 **核心** | `pip install chainmem` | ~22 KB | CLI + Python SDK（不含 sentence-transformers） |
+| 🔍 **完整** | `pip install chainmem[full]` | ~1.5~2 GB | 语义搜索 + FAISS 索引 |
+| 🔐 **加密** | `pip install chainmem[secure]` | ~5 MB | 自动检测凭证 + Fernet 加密存储 |
+| 🚀 **完整+加密** | `pip install chainmem[full,secure]` | ~1.5~2 GB | 全部功能 |
 | 🐍 **源码** | `git clone ... && pip install -e .` | ~20 KB + 自装依赖 | 根据需求自行安装 |
 
 > **💡 建议：** 先装核心版感受一下，需要语义搜索时再装完整版。
+>
+> **💡 网络不好？** `pip install chainmem[full]` 默认拉 CUDA torch（~1GB），建议改用：
+> ```bash
+> pip install chainmem
+> pip install torch --index-url https://download.pytorch.org/whl/cpu    # CPU 版 ~192MB
+> pip install sentence-transformers faiss-cpu
+> ```
 
 #### 🪶 核心版安装（推荐首次尝试）
 
@@ -121,6 +130,9 @@ pip install chainmem[full]
 # 安装 ChainMem 核心
 pip install chainmem
 
+# CPU 版 torch（推荐，网络慢时避免下载 ~1GB CUDA 依赖）
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
 # 手动安装语义搜索依赖
 pip install sentence-transformers>=3.0
 pip install faiss-cpu>=1.8
@@ -142,6 +154,13 @@ pip install faiss_cpu-1.x.x-cp311-cp311-manylinux_2_17_x86_64.whl
 ```
 
 > **注意：** 如果只安装核心版，调用 `ingest()` 或 `retrieve()` 时会提示安装完整版。不影响 CLI 基本操作和 MCP 服务器启动。
+>
+> **🌐 HuggingFace 国内镜像：** 如果服务器无法连接 huggingface.co，模型下载会失败。设置环境变量使用国内镜像：
+> ```bash
+> export HF_ENDPOINT=https://hf-mirror.com
+> # 然后运行 chainmem
+> ```
+> 也可在 systemd service 或 Hermes config 的 `env` 字段中声明此变量（详见 [MCP 集成指南](docs/mcp-integration.md)）。
 
 ### Python SDK
 

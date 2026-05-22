@@ -80,11 +80,20 @@ ChainMem uses a **layered dependency** design — choose what fits your needs:
 
 | Level | Command | Size | Features |
 |:------|:--------|:----:|:---------|
-| 🪶 **Core** | `pip install chainmem` | **~2 MB** | CLI, SQLite storage, text search |
-| 🔥 **Full** | `pip install chainmem[full]` | ~1.5~2 GB | Above + semantic search (sentence-transformers + faiss-cpu) |
+| 🪶 **Core** | `pip install chainmem` | ~22 KB | CLI + Python SDK (no sentence-transformers) |
+| 🔍 **Full** | `pip install chainmem[full]` | ~1.5~2 GB | Semantic search + FAISS index |
+| 🔐 **Secure** | `pip install chainmem[secure]` | ~5 MB | Auto-detect credentials + Fernet encryption |
+| 🚀 **Full+Secure** | `pip install chainmem[full,secure]` | ~1.5~2 GB | Everything |
 | 🐍 **Source** | `git clone ... && pip install -e .` | ~20 KB code | Install deps yourself |
 
 > **💡 Tip:** Start with core to try it out. Install the full version when you need semantic search.
+>
+> **💡 Slow network?** `pip install chainmem[full]` pulls CUDA torch (~1GB). Use CPU-only instead:
+> ```bash
+> pip install chainmem
+> pip install torch --index-url https://download.pytorch.org/whl/cpu    # CPU-only ~192MB
+> pip install sentence-transformers faiss-cpu
+> ```
 
 #### 🪶 Core (recommended for first try)
 
