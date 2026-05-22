@@ -12,6 +12,10 @@
   <i>你给它一个"线头"，它还你一件"毛衣"。</i>
 </p>
 
+<p align="center">
+  🌐 <a href="README.en.md">English</a> · 中文
+</p>
+
 ---
 
 ## 🧠 为什么需要 ChainMem？
