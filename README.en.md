@@ -7,6 +7,8 @@
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License">
   <img src="https://img.shields.io/github/v/release/yabolee-kkk/chainmem" alt="GitHub Release">
   <img src="https://img.shields.io/github/stars/yabolee-kkk/chainmem" alt="GitHub Stars">
+  <img src="https://img.shields.io/pypi/dm/chainmem?color=blue&label=PyPI%20Downloads" alt="PyPI Downloads">
+  <img src="https://img.shields.io/github/actions/workflow/status/yabolee-kkk/chainmem/ci.yml?branch=main&label=CI" alt="CI">
 </p>
 
 <h1 align="center">🧵 ChainMem</h1>

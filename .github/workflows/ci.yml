@@ -27,11 +27,17 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Cache HuggingFace models
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: hf-models-${{ runner.os }}-${{ hashFiles('src/chainmem/pipeline/ingester.py') }}
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev]"
+        pip install -e ".[dev,full]"
 
     - name: Run tests
       run: |
-        python -m pytest tests/ -v --tb=short
+        python -m pytest tests/ -v --tb=short --timeout=120

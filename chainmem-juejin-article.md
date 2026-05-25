@@ -299,10 +299,13 @@ chainmem/
 
 ChainMem 是一个**开源项目**，仓库在 GitHub：[https://github.com/yabolee-kkk/chainmem](https://github.com/yabolee-kkk/chainmem)
 
-当前处于 **Alpha 阶段**（v0.4.1），核心闭环已完成：
+当前处于 **Alpha 阶段**（v0.5.3），核心闭环已完成：
 
 - ✅ 结链（文本 → 切块 → 嵌入 → 存储）
 - ✅ 追溯（语义搜索 + 子串匹配 + 指针遍历）
+- ✅ **双向遍历**（匹配节点上下文 100% 还原）
+- ✅ **模糊分词兜底**（短查询、重组查询零召回问题解决）
+- ✅ **Levenshtein 拼写纠错**（拼写错误自动纠正）
 - ✅ MCP 服务器持久化
 - ✅ FAISS 索引持久化（秒级启动）
 - ✅ 增量索引（毫秒级添加）
@@ -342,4 +345,6 @@ ChainMem 的灵感来自一个简单的观察：**AI Agent 说一句话就要翻
 **安装：**
 - 🪶 核心版（秒级下载）：`pip install chainmem`
 - 🔥 完整版（含语义搜索）：`pip install chainmem[full]`
+- 🔐 加密版（凭证自动加密）：`pip install chainmem[secure]`
+- 🚀 全功能版：`pip install chainmem[full,secure]`
 - 📦 离线安装：下载 whl 后 `pip install *.whl`

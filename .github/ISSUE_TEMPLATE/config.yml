@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://github.com/yabolee-kkk/chainmem#readme
+    about: Check the README first
+  - name: 💬 Discussions
+    url: https://github.com/yabolee-kkk/chainmem/discussions
+    about: Ask questions and discuss ideas
