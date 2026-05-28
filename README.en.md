@@ -69,7 +69,7 @@ Search "stock" → find chain head → traverse pointers → full conversation r
 | ⚡ **Millisecond Latency** | Query ~22ms, incremental add ~132ms |
 | 🚀 **Instant Startup** | FAISS index persistence — 60s → 1s |
 | 🏷️ **Tag Classification** | Organize memories by project/topic |
-| 🔌 **MCP Protocol** | Native integration with Hermes Agent and other AI Agents |
+| 🔌 **MCP Protocol** | HTTP + Unix Socket dual transport, native Hermes Agent integration ([setup guide](docs/mcp-integration.md)) |
 | 🐍 **Python SDK** | One-liner integration into your project |
 
 ---
@@ -186,6 +186,10 @@ chainmem retrieve "Actually my idea"
 chainmem stats
 
 # Start MCP server (for AI Agent integration)
+# HTTP mode (recommended — persistent connection, survives gateway restarts)
+chainmem serve --socket /tmp/chainmem.sock --http-port 3115
+
+# Unix Socket mode (legacy compatibility)
 chainmem serve --socket /tmp/chainmem.sock
 ```
 
@@ -268,7 +272,18 @@ chainmem serve --socket /tmp/chainmem.sock
 
 ### Hermes Agent (MCP Protocol)
 
-Configure `~/.hermes/config.yaml`:
+**Recommended — HTTP transport (persistent, survives gateway restarts):**
+
+```yaml
+mcp_servers:
+  chainmem:
+    url: http://127.0.0.1:3115/mcp
+    transport: http
+```
+
+> Prerequisite: ChainMem server running in HTTP mode: `chainmem serve --socket /tmp/chainmem.sock --http-port 3115`
+
+**Legacy — Unix Socket:**
 
 ```yaml
 mcp_servers:
@@ -293,7 +308,7 @@ Three tools available after startup:
 Phase 1 ✅ Core Loop
   ├─ Ingestion (text → chunk → embed → store)
   ├─ Retrieval (semantic + substring + chain traversal)
-  ├─ Persistent MCP server
+  ├─ Persistent MCP server (HTTP + Unix Socket dual transport)
   ├─ FAISS index persistence (1s startup)
   └─ Incremental indexing (ms-level add)
 

@@ -73,7 +73,7 @@ ChainMem 用**链式结构**模拟人脑的联想回忆：
 | ⚡ **毫秒级响应** | 查询 ~22ms，增量添加 ~132ms |
 | 🚀 **秒级启动** | FAISS 索引持久化，重启从 60s → 1s |
 | 🏷️ **标签分类** | 按项目/主题组织记忆 |
-| 🔌 **MCP 协议** | 原生支持 Hermes Agent 等 AI Agent 集成（[配置指南](docs/mcp-integration.md)） |
+| 🔌 **MCP 协议** | 支持 HTTP + Unix Socket 双传输，原生集成 Hermes Agent 等 AI Agent（[配置指南](docs/mcp-integration.md)） |
 | 🐍 **Python SDK** | 一句话集成到你的项目 |
 
 ---
@@ -203,6 +203,10 @@ chainmem retrieve "其实我的想法"
 chainmem stats
 
 # 启动 MCP 服务器（用于 AI Agent 集成）
+# HTTP 模式（推荐 — 持久连接，网关重启不受影响）
+chainmem serve --socket /tmp/chainmem.sock --http-port 3115
+
+# Unix Socket 模式（兼容旧版）
 chainmem serve --socket /tmp/chainmem.sock
 ```
 
@@ -283,7 +287,18 @@ chainmem serve --socket /tmp/chainmem.sock
 
 ### Hermes Agent（MCP 协议）
 
-配置 `~/.hermes/config.yaml`：
+**推荐方式 — HTTP 传输（持久连接，网关重启不受影响）：**
+
+```yaml
+mcp_servers:
+  chainmem:
+    url: http://127.0.0.1:3115/mcp
+    transport: http
+```
+
+> 前提：ChainMem 服务以 HTTP 模式运行：`chainmem serve --socket /tmp/chainmem.sock --http-port 3115`
+
+**兼容方式 — Unix Socket：**
 
 ```yaml
 mcp_servers:
@@ -308,7 +323,7 @@ mcp_servers:
 Phase 1 ✅ 核心闭环
   ├─ 结链（文本 → 切块 → 嵌入 → 存储）
   ├─ 追溯（语义搜索 + 子串匹配 + 指针遍历）
-  ├─ MCP 服务器持久化
+  ├─ MCP 服务器持久化（HTTP + Unix Socket 双传输）
   ├─ FAISS 索引持久化（秒级启动）
   └─ 增量索引（毫秒级添加）
 
