@@ -103,6 +103,21 @@ label{display:block;font-size:13px;color:#8b949e;margin:10px 0 4px}
       <div class="section-content" id="chainList"></div>
     </div>
 
+    <div class="section" id="consolidationSection" style="margin-bottom:16px">
+      <h2>🧠 LLM 提炼</h2>
+      <div class="section-content" id="consolidationContent">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+          <span style="font-size:13px;color:#8b949e">状态: <b id="consolidationStatus">-</b></span>
+          <span style="font-size:13px;color:#8b949e">聚类: <b id="consolidationClusters">-</b></span>
+          <span style="font-size:13px;color:#8b949e">洞察: <b id="consolidationInsights">-</b></span>
+          <span style="font-size:13px;color:#8b949e">矛盾: <b id="consolidationContradictions">-</b></span>
+          <span style="font-size:13px;color:#8b949e">上次运行: <b id="consolidationLastRun">-</b></span>
+        </div>
+        <button class="btn btn-sm" onclick="triggerConsolidation()" id="consolidateBtn">立即运行</button>
+        <span id="consolidationResult" style="font-size:13px;color:#8b949e;margin-left:10px"></span>
+      </div>
+    </div>
+
     <div class="section" id="searchSection" style="display:none">
       <h2>🔍 搜索结果 <span class="badge" id="searchCount">0</span></h2>
       <div class="section-content" id="searchResults"></div>
@@ -267,6 +282,48 @@ async function ingest(){
 // --- 初始化 ---
 loadStats();
 loadChains();
+loadConsolidationStatus();
+
+// --- Consolidation ---
+async function loadConsolidationStatus(){
+  try{
+    const r=await fetch(BASE+'/api/consolidation/status');
+    const d=await r.json();
+    $('consolidationStatus').textContent=d.status||'idle';
+    $('consolidationClusters').textContent=d.total_clusters||0;
+    $('consolidationInsights').textContent=d.total_insights||0;
+    $('consolidationContradictions').textContent=d.total_contradictions||0;
+    if(d.last_run_at&&d.last_run_at>0){
+      const t=new Date(d.last_run_at*1000);
+      $('consolidationLastRun').textContent=t.toLocaleString('zh-CN');
+    }else{
+      $('consolidationLastRun').textContent='从未运行';
+    }
+  }catch(e){}
+}
+
+async function triggerConsolidation(){
+  const btn=$('consolidateBtn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span> 运行中...';
+  $('consolidationResult').textContent='LLM 分析中，请稍候...';
+  try{
+    const r=await fetch(BASE+'/api/consolidate',{method:'POST'});
+    const d=await r.json();
+    if(d.error){
+      $('consolidationResult').textContent='❌ '+d.error;
+      showToast('提炼失败: '+d.error,true);
+    }else{
+      $('consolidationResult').textContent=`✅ 扫描 ${d.chains_scanned} 条链, 发现 ${d.clusters_found} 个聚类, ${d.insights_extracted} 条洞察, ${d.contradictions_detected} 处矛盾`;
+      showToast('✅ 提炼完成');
+      loadConsolidationStatus();
+      loadChains();
+    }
+  }catch(e){
+    $('consolidationResult').textContent='❌ '+e.message;
+    showToast('请求失败: '+e.message,true);
+  }
+  finally{btn.disabled=false;btn.innerHTML='立即运行'}
+}
 </script>
 </body>
 </html>

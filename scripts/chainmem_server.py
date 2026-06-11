@@ -5,12 +5,17 @@ sys.path.insert(0, os.path.expanduser("~/chainmem/src"))
 
 from chainmem import ChainMemory
 
+# 导入 consolidation 模块
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from consolidation import ConsolidationScheduler, run_consolidation
+
 DB = os.path.expanduser("~/.chainmem/data.db")
 SOCKET = "/tmp/chainmem.sock"
 HTTP_PORT = 3115  # MCP HTTP 端口
 
 # 持久化连接（模型在模块级只加载一次）
 _cm = None
+_scheduler = None  # ConsolidationScheduler instance
 
 
 def get_cm():
@@ -174,6 +179,12 @@ async def main():
     http_server = await asyncio.start_server(handle_http, "127.0.0.1", HTTP_PORT)
     print(f"HTTP 服务启动: http://127.0.0.1:{HTTP_PORT}/mcp", file=sys.stderr)
 
+    # 3) 启动 consolidation 调度器
+    global _scheduler
+    _scheduler = ConsolidationScheduler(get_cm, DB)
+    _scheduler.start()
+    print("Consolidation 调度器已启动", file=sys.stderr)
+
     async with server:
         async with http_server:
             await asyncio.gather(
@@ -183,6 +194,7 @@ async def main():
 
 
 async def handle_http(reader, writer):
+    global _scheduler
     """MCP HTTP 传输处理器"""
     try:
         data = await asyncio.wait_for(reader.read(65536), timeout=30)
@@ -458,6 +470,52 @@ async def handle_http(reader, writer):
                         }, ensure_ascii=False)
                 except Exception as e:
                     resp_body = json.dumps({"error": str(e)})
+                http_response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(resp_body.encode())}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                    f"{resp_body}"
+                )
+                writer.write(http_response.encode())
+
+            # POST /api/consolidate — manual trigger
+            elif method == "POST" and path_clean == "/api/consolidate":
+                if _scheduler:
+                    loop = asyncio.get_running_loop()
+                    result = await loop.run_in_executor(None, _scheduler.trigger_now)
+                    resp_body = json.dumps(result, ensure_ascii=False)
+                else:
+                    # Fallback: run inline
+                    llm_config = {
+                        "url": os.environ.get("CHAINMEM_LLM_URL",
+                            "https://api.deepseek.com/v1/chat/completions"),
+                        "api_key": os.environ.get("CHAINMEM_LLM_KEY",
+                            os.environ.get("DEEPSEEK_API_KEY", "")),
+                        "model": os.environ.get("CHAINMEM_LLM_MODEL", "deepseek-chat"),
+                    }
+                    result = run_consolidation(cm, DB, llm_config)
+                    resp_body = json.dumps(result, ensure_ascii=False)
+                http_response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(resp_body.encode())}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                    f"{resp_body}"
+                )
+                writer.write(http_response.encode())
+
+            # GET /api/consolidation/status — check status
+            elif method == "GET" and path_clean == "/api/consolidation/status":
+                if _scheduler:
+                    status = _scheduler.get_status()
+                else:
+                    from consolidation import _load_state
+                    status = _load_state()
+                    status["status"] = "no_scheduler"
+                resp_body = json.dumps(status, ensure_ascii=False)
                 http_response = (
                     "HTTP/1.1 200 OK\r\n"
                     "Content-Type: application/json\r\n"
