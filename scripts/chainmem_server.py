@@ -258,8 +258,220 @@ async def handle_http(reader, writer):
             await writer.drain()
 
         else:
-            http_response = "HTTP/1.1 404 Not Found\r\n\r\nNot Found"
-            writer.write(http_response.encode())
+            path_clean = path.split('?')[0]
+            cm = get_cm()
+
+            # GET / — serve dashboard
+            if method == "GET" and path_clean == "/":
+                html_path = os.path.expanduser("~/chainmem/dashboard.html")
+                try:
+                    with open(html_path, "r", encoding="utf-8") as f:
+                        html = f.read()
+                    resp_body = html.encode("utf-8")
+                    http_response = (
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/html; charset=utf-8\r\n"
+                        f"Content-Length: {len(resp_body)}\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "\r\n"
+                    )
+                    writer.write(http_response.encode())
+                    writer.write(resp_body)
+                except FileNotFoundError:
+                    http_response = "HTTP/1.1 404 Not Found\r\n\r\nDashboard file not found"
+                    writer.write(http_response.encode())
+
+            # GET /api/chains — list all chains
+            elif method == "GET" and path_clean == "/api/chains":
+                import sqlite3
+                db_path = cm.db_path if hasattr(cm, 'db_path') else os.path.expanduser("~/.chainmem/data.db")
+                chains = []
+                try:
+                    conn = sqlite3.connect(db_path)
+                    conn.row_factory = sqlite3.Row
+                    cur = conn.execute("""
+                        SELECT id, anchor_prefix, node_count, tags, created_at
+                        FROM chains
+                        ORDER BY created_at DESC
+                        LIMIT 200
+                    """)
+                    for row in cur.fetchall():
+                        ch = dict(row)
+                        # Get preview (first node text)
+                        preview = ""
+                        try:
+                            node = conn.execute(
+                                "SELECT text FROM nodes WHERE chain_id=? ORDER BY seq LIMIT 1",
+                                (ch["id"],)
+                            ).fetchone()
+                            if node:
+                                preview = node["text"][:200]
+                        except Exception:
+                            pass
+                        ch["preview"] = preview
+                        chains.append(ch)
+                    conn.close()
+                except Exception as e:
+                    resp_body = json.dumps({"error": str(e)})
+                    http_response = (
+                        "HTTP/1.1 500 Internal Server Error\r\n"
+                        "Content-Type: application/json\r\n"
+                        f"Content-Length: {len(resp_body.encode())}\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "\r\n" + resp_body
+                    )
+                    writer.write(http_response.encode())
+                    await writer.drain()
+                    return
+
+                resp_body = json.dumps({"chains": chains}, ensure_ascii=False)
+                http_response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(resp_body.encode())}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                    f"{resp_body}"
+                )
+                writer.write(http_response.encode())
+
+            # GET /api/chain/{id} — get full chain
+            elif method == "GET" and path_clean.startswith("/api/chain/"):
+                chain_id = path_clean[len("/api/chain/"):]
+                import sqlite3
+                db_path = cm.db_path if hasattr(cm, 'db_path') else os.path.expanduser("~/.chainmem/data.db")
+                try:
+                    conn = sqlite3.connect(db_path)
+                    conn.row_factory = sqlite3.Row
+                    ch_row = conn.execute(
+                        "SELECT * FROM chains WHERE id=?", (chain_id,)
+                    ).fetchone()
+                    if not ch_row:
+                        resp_body = json.dumps({"error": "Chain not found"})
+                        http_response = "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
+                        http_response += f"Content-Length: {len(resp_body.encode())}\r\n"
+                        http_response += "Access-Control-Allow-Origin: *\r\n\r\n" + resp_body
+                        writer.write(http_response.encode())
+                        await writer.drain()
+                        return
+                    chain = dict(ch_row)
+                    # Get all nodes in order
+                    nodes = conn.execute(
+                        "SELECT seq, text FROM nodes WHERE chain_id=? ORDER BY seq",
+                        (chain_id,)
+                    ).fetchall()
+                    chain["nodes"] = [dict(n) for n in nodes]
+                    chain["content"] = "\n".join(n["text"] for n in nodes)
+                    conn.close()
+                except Exception as e:
+                    resp_body = json.dumps({"error": str(e)})
+                    http_response = (
+                        "HTTP/1.1 500 Internal Server Error\r\n"
+                        "Content-Type: application/json\r\n"
+                        f"Content-Length: {len(resp_body.encode())}\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "\r\n" + resp_body
+                    )
+                    writer.write(http_response.encode())
+                    await writer.drain()
+                    return
+
+                resp_body = json.dumps(chain, ensure_ascii=False)
+                http_response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(resp_body.encode())}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                    f"{resp_body}"
+                )
+                writer.write(http_response.encode())
+
+            # POST /api/search — search memories
+            elif method == "POST" and path_clean == "/api/search":
+                try:
+                    req_body = json.loads(body)
+                    query = req_body.get("query", "")
+                    tags_str = req_body.get("tags", "")
+                    tag_list = [t.strip() for t in tags_str.split(",") if t.strip()]
+                    # Use MCP retrieve for semantic search
+                    import numpy as np
+                    results = cm.retrieve(query, tags=tag_list or None)
+                    if results:
+                        text = "".join(results)
+                        # Get chain info
+                        import sqlite3
+                        db_path = cm.db_path if hasattr(cm, 'db_path') else os.path.expanduser("~/.chainmem/data.db")
+                        conn = sqlite3.connect(db_path)
+                        conn.row_factory = sqlite3.Row
+                        chain_rows = conn.execute(
+                            "SELECT id, anchor_prefix, tags, node_count FROM chains ORDER BY created_at DESC LIMIT 20"
+                        ).fetchall()
+                        conn.close()
+                        result_items = []
+                        for cr in chain_rows:
+                            cd = dict(cr)
+                            # Get first 200 chars of content for preview
+                            result_items.append({
+                                "chain_id": cd["id"],
+                                "anchor_prefix": cd["anchor_prefix"],
+                                "tags": cd["tags"],
+                                "node_count": cd["node_count"],
+                                "content": text[:500],
+                                "score": 1.0,
+                            })
+                        resp_body = json.dumps({"results": result_items}, ensure_ascii=False)
+                    else:
+                        resp_body = json.dumps({"results": []})
+                except Exception as e:
+                    resp_body = json.dumps({"error": str(e)})
+                http_response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(resp_body.encode())}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                    f"{resp_body}"
+                )
+                writer.write(http_response.encode())
+
+            # POST /api/ingest — store a new memory
+            elif method == "POST" and path_clean == "/api/ingest":
+                try:
+                    req_body = json.loads(body)
+                    text = req_body.get("text", "")
+                    source = req_body.get("source", "dashboard")
+                    tags_str = req_body.get("tags", "hermes")
+                    tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+                    if not text:
+                        resp_body = json.dumps({"error": "text is required"})
+                    else:
+                        loop = asyncio.get_running_loop()
+                        chain = await loop.run_in_executor(
+                            None,
+                            lambda: _do_dashboard_ingest(cm, text, source, tags)
+                        )
+                        resp_body = json.dumps({
+                            "chain_id": chain.id,
+                            "node_count": chain.node_count,
+                            "anchor_prefix": chain.anchor_prefix,
+                        }, ensure_ascii=False)
+                except Exception as e:
+                    resp_body = json.dumps({"error": str(e)})
+                http_response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: application/json\r\n"
+                    f"Content-Length: {len(resp_body.encode())}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                    f"{resp_body}"
+                )
+                writer.write(http_response.encode())
+
+            else:
+                http_response = "HTTP/1.1 404 Not Found\r\n\r\nNot Found"
+                writer.write(http_response.encode())
+
             await writer.drain()
 
     except asyncio.TimeoutError:
@@ -359,6 +571,25 @@ def process_mcp_request(cm, rid, mcp_method, req):
     else:
         return {"jsonrpc": "2.0", "id": rid,
                 "error": {"code": -32601, "message": f"未知方法: {mcp_method}"}}
+
+
+def _do_dashboard_ingest(cm, text, source, tags):
+    """ingest helper for dashboard API (runs in thread pool)."""
+    import numpy as np
+    chain = cm.ingest(text, source=source, tags=tags)
+    nodes = chain.nodes
+    if nodes:
+        embeddings = np.array([n.embedding for n in nodes])
+        cm.retriever.add_nodes(
+            embeddings=embeddings,
+            node_ids=[n.id for n in nodes],
+            texts=[n.text for n in nodes],
+            chain_ids=[n.chain_id for n in nodes],
+            next_ids=[n.next_id for n in nodes],
+            seqs=[n.seq for n in nodes],
+            prev_ids=[n.prev_id for n in nodes],
+        )
+    return chain
 
 
 if __name__ == "__main__":

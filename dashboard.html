@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChainMem 链忆 - 管理面板</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+body{background:#0f1117;color:#e1e4e8;min-height:100vh}
+header{background:#161b22;border-bottom:1px solid #30363d;padding:18px 24px;display:flex;align-items:center;gap:12px}
+header h1{font-size:20px;display:flex;align-items:center;gap:8px}
+header h1 span{color:#58a6ff}
+header .sub{color:#8b949e;font-size:13px;margin-left:12px}
+.stats-bar{display:flex;gap:16px;padding:20px 24px;background:#161b22;border-bottom:1px solid #21262d}
+.stat-card{flex:1;background:#1c2128;border:1px solid #30363d;border-radius:8px;padding:16px}
+.stat-card .num{font-size:28px;font-weight:700;color:#58a6ff}
+.stat-card .label{font-size:13px;color:#8b949e;margin-top:4px}
+.container{display:flex;gap:20px;padding:20px 24px;max-width:1400px}
+.sidebar{width:300px;flex-shrink:0}
+.main{flex:1;min-width:0}
+.section{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:16px}
+.section h2{font-size:15px;padding:14px 16px;border-bottom:1px solid #21262d;color:#f0f6fc;display:flex;align-items:center;gap:8px}
+.section h2 .badge{background:#1f6feb;color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;margin-left:auto}
+.section-content{padding:14px 16px}
+input[type=text],textarea,select{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;padding:10px 12px;font-size:14px;outline:none}
+input:focus,textarea:focus{border-color:#58a6ff;box-shadow:0 0 0 2px rgba(88,166,255,.15)}
+textarea{resize:vertical;min-height:80px;font-family:inherit}
+label{display:block;font-size:13px;color:#8b949e;margin:10px 0 4px}
+.btn{background:#238636;color:#fff;border:none;border-radius:6px;padding:10px 20px;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:#2ea043}
+.btn-primary{background:#1f6feb}
+.btn-primary:hover{background:#388bfd}
+.btn-sm{padding:6px 12px;font-size:12px}
+.tag{display:inline-block;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb44;border-radius:4px;padding:2px 8px;font-size:11px;margin:2px}
+.tag-list{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}
+.chain-item{background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:12px 14px;margin-bottom:8px;cursor:pointer}
+.chain-item:hover{border-color:#58a6ff}
+.chain-item .prefix{font-weight:600;color:#f0f6fc;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chain-item .meta{font-size:12px;color:#8b949e;margin-top:4px;display:flex;gap:12px}
+.chain-item .preview{font-size:13px;color:#8b949e;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.chain-detail{background:#1c2128;border:1px solid #30363d;border-radius:8px;padding:16px}
+.chain-detail h3{font-size:16px;margin-bottom:10px;color:#f0f6fc}
+.chain-detail pre{background:#0d1117;padding:14px;border-radius:6px;font-size:13px;line-height:1.6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow-y:auto;color:#e1e4e8}
+.chain-detail .back{color:#58a6ff;cursor:pointer;font-size:13px;margin-bottom:10px;display:inline-block}
+.chain-detail .back:hover{text-decoration:underline}
+.search-result{border-bottom:1px solid #21262d;padding:12px 0}
+.search-result:last-child{border-bottom:none}
+.search-result .text{font-size:13px;line-height:1.6;color:#e1e4e8}
+.search-result .meta{font-size:12px;color:#8b949e;margin-top:4px}
+.loading{text-align:center;color:#8b949e;padding:40px;font-size:14px}
+.error{color:#f85149;padding:12px;background:#f8514911;border:1px solid #f8514944;border-radius:6px;margin:8px 0}
+.empty{color:#8b949e;text-align:center;padding:30px;font-size:14px}
+.toast{position:fixed;bottom:24px;right:24px;background:#238636;color:#fff;padding:12px 20px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .3s;z-index:100}
+.toast.error{background:#da3633}
+.toast.show{opacity:1}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:860px){.container{flex-direction:column}.sidebar{width:100%}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>⛓️</span> ChainMem <span>链忆</span></h1>
+  <span class="sub">链式记忆管理面板</span>
+</header>
+
+<div class="stats-bar" id="statsBar">
+  <div class="stat-card"><div class="num" id="statChains">-</div><div class="label">记忆链</div></div>
+  <div class="stat-card"><div class="num" id="statNodes">-</div><div class="label">节点总数</div></div>
+  <div class="stat-card"><div class="num" id="statTags">-</div><div class="label">标签</div></div>
+</div>
+
+<div class="container">
+  <!-- 侧栏：搜索 + 新建 -->
+  <div class="sidebar">
+    <div class="section">
+      <h2>🔍 搜索记忆</h2>
+      <div class="section-content">
+        <input type="text" id="searchInput" placeholder="关键词..." onkeydown="if(event.key==='Enter')search()">
+        <input type="text" id="searchTags" placeholder="标签过滤（逗号分隔，可选）" style="margin-top:8px">
+        <button class="btn btn-primary btn-sm" onclick="search()" style="margin-top:8px;width:100%">搜索</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>✏️ 新建记忆</h2>
+      <div class="section-content">
+        <textarea id="ingestText" placeholder="输入要存储的内容..."></textarea>
+        <label>来源（可选）</label>
+        <input type="text" id="ingestSource" placeholder="如: manual, session:xxx">
+        <label>标签（逗号分隔）</label>
+        <input type="text" id="ingestTags" placeholder="如: 股决,架构设计">
+        <button class="btn btn-sm" onclick="ingest()" style="margin-top:10px;width:100%">存储</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主区域 -->
+  <div class="main">
+    <div class="section" id="chainListSection">
+      <h2>📋 记忆链列表 <span class="badge" id="chainCount">0</span></h2>
+      <div class="section-content" id="chainList"></div>
+    </div>
+
+    <div class="section" id="searchSection" style="display:none">
+      <h2>🔍 搜索结果 <span class="badge" id="searchCount">0</span></h2>
+      <div class="section-content" id="searchResults"></div>
+    </div>
+
+    <div class="section" id="detailSection" style="display:none">
+      <div class="chain-detail" id="chainDetail"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const BASE = 'http://127.0.0.1:3115';
+
+// --- 工具 ---
+function showToast(msg, isError=false){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.className='toast'+(isError?' error':'')+' show';
+  setTimeout(()=>t.className='toast',3000);
+}
+
+function $(id){return document.getElementById(id)}
+
+function escapeHtml(s){
+  const d=document.createElement('div');d.textContent=s;return d.innerHTML;
+}
+
+// --- 加载统计 ---
+async function loadStats(){
+  try{
+    const r=await fetch(BASE+'/health');
+    const d=await r.json();
+    $('statChains').textContent=d.chains||0;
+    $('statNodes').textContent=d.nodes||0;
+  }catch(e){$('statChains').textContent='❌';$('statNodes').textContent='❌'}
+}
+
+// --- 加载链列表 ---
+async function loadChains(){
+  const list=$('chainList');list.innerHTML='<div class="loading"><span class="spinner"></span> 加载中...</div>';
+  try{
+    const r=await fetch(BASE+'/api/chains');
+    const data=await r.json();
+    const chains=data.chains||[];
+    $('chainCount').textContent=chains.length;
+    if(chains.length===0){
+      list.innerHTML='<div class="empty">暂无记忆链</div>';return;
+    }
+    list.innerHTML=chains.map(c=>`
+      <div class="chain-item" onclick="showChain('${c.id}')">
+        <div class="prefix">${escapeHtml(c.anchor_prefix||'(无前缀)')}</div>
+        <div class="meta">
+          <span>📦 ${c.node_count||0} 节点</span>
+          <span>🗂️ ${c.tags||'无标签'}</span>
+          <span>📅 ${c.created_at||''}</span>
+        </div>
+        <div class="preview">${escapeHtml((c.preview||'').slice(0,120))}</div>
+      </div>
+    `).join('');
+  }catch(e){
+    list.innerHTML=`<div class="error">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// --- 查看单链 ---
+async function showChain(id){
+  $('chainListSection').style.display='none';
+  $('searchSection').style.display='none';
+  $('detailSection').style.display='block';
+  const detail=$('chainDetail');
+  detail.innerHTML='<div class="loading"><span class="spinner"></span> 加载中...</div>';
+  try{
+    const r=await fetch(BASE+'/api/chain/'+encodeURIComponent(id));
+    const data=await r.json();
+    detail.innerHTML=`
+      <div class="back" onclick="backToList()">← 返回列表</div>
+      <h3>⛓️ ${escapeHtml(data.anchor_prefix||'记忆链')}</h3>
+      ${data.tags?`<div class="tag-list">${data.tags.split(',').map(t=>`<span class="tag">${escapeHtml(t.trim())}</span>`).join('')}</div>`:''}
+      <div class="meta" style="font-size:12px;color:#8b949e;margin:8px 0">
+        ${data.node_count||0} 节点 · ${data.created_at||''}
+      </div>
+      <pre>${escapeHtml(data.content||'(空)')}</pre>
+    `;
+  }catch(e){
+    detail.innerHTML=`<div class="back" onclick="backToList()">← 返回列表</div><div class="error">加载失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function backToList(){
+  $('chainListSection').style.display='block';
+  $('searchSection').style.display='none';
+  $('detailSection').style.display='none';
+}
+
+// --- 搜索 ---
+async function search(){
+  const query=$('searchInput').value.trim();
+  if(!query){showToast('请输入搜索关键词',true);return}
+  $('chainListSection').style.display='none';
+  $('detailSection').style.display='none';
+  $('searchSection').style.display='block';
+  $('searchResults').innerHTML='<div class="loading"><span class="spinner"></span> 搜索中...</div>';
+  try{
+    const r=await fetch(BASE+'/api/search',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query,tags:$('searchTags').value.trim()})
+    });
+    const data=await r.json();
+    if(data.error){
+      $('searchResults').innerHTML=`<div class="error">${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    const results=data.results||[];
+    $('searchCount').textContent=results.length;
+    if(results.length===0){
+      $('searchResults').innerHTML='<div class="empty">未找到匹配的记忆</div>';return;
+    }
+    $('searchResults').innerHTML=results.map(r=>`
+      <div class="search-result" onclick="showChain('${r.chain_id}')" style="cursor:pointer">
+        <div class="text">${escapeHtml((r.content||'').slice(0,300))}</div>
+        <div class="meta">
+          ${r.tags?`<span>🏷️ ${escapeHtml(r.tags)}</span>`:''}
+          ${r.score?`<span>📊 匹配度: ${(r.score*100).toFixed(0)}%</span>`:''}
+          <span>→ 查看完整链</span>
+        </div>
+      </div>
+    `).join('');
+  }catch(e){
+    $('searchResults').innerHTML=`<div class="error">搜索失败: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// --- 新建记忆 ---
+async function ingest(){
+  const text=$('ingestText').value.trim();
+  if(!text){showToast('请输入内容',true);return}
+  const btn=event.target;btn.disabled=true;btn.innerHTML='<span class="spinner"></span> 存储中...';
+  try{
+    const r=await fetch(BASE+'/api/ingest',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        text,
+        source:$('ingestSource').value.trim()||'dashboard',
+        tags:$('ingestTags').value.trim()||'hermes'
+      })
+    });
+    const data=await r.json();
+    if(data.error){showToast('存储失败: '+data.error,true)}
+    else{
+      showToast('✅ 存储成功');
+      $('ingestText').value='';$('ingestSource').value='';$('ingestTags').value='';
+      loadStats();loadChains();
+    }
+  }catch(e){showToast('存储失败: '+e.message,true)}
+  finally{btn.disabled=false;btn.innerHTML='存储'}
+}
+
+// --- 初始化 ---
+loadStats();
+loadChains();
+</script>
+</body>
+</html>
