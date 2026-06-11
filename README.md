@@ -74,6 +74,7 @@ ChainMem 用**链式结构**模拟人脑的联想回忆：
 | 🚀 **秒级启动** | FAISS 索引持久化，重启从 60s → 1s |
 | 🏷️ **标签分类** | 按项目/主题组织记忆 |
 | 🔌 **MCP 协议** | 支持 HTTP + Unix Socket 双传输，原生集成 Hermes Agent 等 AI Agent（[配置指南](docs/mcp-integration.md)） |
+| 🖥️ **Web 仪表盘** | 内置管理界面 `http://127.0.0.1:3115/`，可视化浏览、搜索、新建记忆 |
 | 🐍 **Python SDK** | 一句话集成到你的项目 |
 
 ---
@@ -317,6 +318,40 @@ mcp_servers:
 
 ---
 
+## 🖥️ Web 仪表盘
+
+ChainMem 服务内置 Web 管理界面。服务运行后（`chainmem serve --http-port 3115` 或使用持久化脚本），在浏览器打开：
+
+```
+http://127.0.0.1:3115/
+```
+
+### 功能
+
+| 功能 | 说明 |
+|:-----|:-----|
+| 📊 **统计栏** | 记忆链数、节点总数、标签数实时显示 |
+| 📋 **链列表** | 按时间倒序，显示前缀、节点数、标签、内容预览 |
+| 🔍 **搜索** | 关键词 + 标签过滤，点击结果查看完整链 |
+| ⛓️ **详情** | 单条记忆链完整内容，含所有节点原文 |
+| ✏️ **新建记忆** | 直接输入文本、来源、标签，即时存储 |
+
+### API 端点
+
+Web 仪表盘基于以下 REST API：
+
+| 端点 | 方法 | 说明 |
+|:-----|:----|:-----|
+| `/health` | GET | 健康检查 + 统计 |
+| `/api/chains` | GET | 列出所有记忆链（含预览） |
+| `/api/chain/{id}` | GET | 获取单链完整内容 |
+| `/api/search` | POST | 语义搜索记忆 |
+| `/api/ingest` | POST | 新建记忆 |
+
+所有端点支持 CORS，可直接从前端调用。
+
+---
+
 ## 🗺️ 路线图
 
 ```
@@ -371,8 +406,9 @@ chainmem/
 │   │   ├── ingester.py      # 结链（切块 → 嵌入 → 串联）
 │   │   └── retriever.py     # 追溯（FAISS + 子串 + 指针）
 │   └── cli/app.py           # Typer CLI（含 MCP server）
+├── dashboard.html             # Web 管理面板
 ├── scripts/
-│   ├── chainmem_server.py   # 持久化 MCP 服务
+│   ├── chainmem_server.py     # 持久化 MCP 服务（含 Web 仪表盘 API）
 │   └── benchmark.py         # 性能基准测试
 └── tests/
     └── test_core.py         # 核心测试

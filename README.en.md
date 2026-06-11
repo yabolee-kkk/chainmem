@@ -69,6 +69,7 @@ Search "stock" → find chain head → traverse pointers → full conversation r
 | ⚡ **Millisecond Latency** | Query ~22ms, incremental add ~132ms |
 | 🚀 **Instant Startup** | FAISS index persistence — 60s → 1s |
 | 🏷️ **Tag Classification** | Organize memories by project/topic |
+| 🖥️ **Web Dashboard** | Built-in management UI at `http://127.0.0.1:3115/` — browse, search, and create memories |
 | 🔌 **MCP Protocol** | HTTP + Unix Socket dual transport, native Hermes Agent integration ([setup guide](docs/mcp-integration.md)) |
 | 🐍 **Python SDK** | One-liner integration into your project |
 
@@ -299,6 +300,40 @@ Three tools available after startup:
 | `chainmem_ingest(text, source, tags)` | Store memory |
 | `chainmem_retrieve(query, tags)` | Retrieve memory (with tag filtering) |
 | `chainmem_stats()` | View memory statistics |
+
+---
+
+## 🖥️ Web Dashboard
+
+ChainMem ships with a built-in web management UI. After starting the server (`chainmem serve --http-port 3115` or using the persistent script), open:
+
+```
+http://127.0.0.1:3115/
+```
+
+### Features
+
+| Feature | Description |
+|:--------|:------------|
+| 📊 **Stats Bar** | Real-time chain count, node count, tags |
+| 📋 **Chain List** | Chronological list with prefix, node count, tags, preview |
+| 🔍 **Search** | Keyword + tag filter, click results for full chain |
+| ⛓️ **Detail View** | Full content of a single memory chain |
+| ✏️ **New Memory** | Directly input text, source, and tags to store |
+
+### REST API Endpoints
+
+The dashboard is powered by these REST APIs:
+
+| Endpoint | Method | Description |
+|:---------|:-------|:------------|
+| `/health` | GET | Health check + stats |
+| `/api/chains` | GET | List all chains (with preview) |
+| `/api/chain/{id}` | GET | Get full chain content |
+| `/api/search` | POST | Semantic search |
+| `/api/ingest` | POST | Create new memory |
+
+All endpoints support CORS and can be called directly from any frontend.
 
 ---
 
