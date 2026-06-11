@@ -166,62 +166,249 @@ def mcp(
 def serve(
     socket_path: str = typer.Option("/tmp/chainmem.sock", "--socket", "-s",
                                     help="Unix socket 路径"),
+    http_port: int = typer.Option(3115, "--http-port", "-p",
+                                   help="HTTP 端口（设 0 禁用 HTTP）"),
     db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
 ):
-    """启动持久化 MCP 服务（Unix socket，供 Hermes 常驻连接）
+    """启动持久化 MCP 服务（Unix socket + 可选的 HTTP/Web Dashboard）
 
     模型在启动时一次性加载，之后查询毫秒级响应。
     用 systemd 管理此服务。
+
+    示例：
+      chainmem serve                                               # Unix socket only
+      chainmem serve --http-port 3115                               # + HTTP + Web Dashboard
+      chainmem serve --http-port 3115 --socket /tmp/chainmem.sock   # 双传输
     """
-    import os
     import asyncio
     import json
+    import os
 
-    # 预加载模型和索引（冷启动，仅一次）
+    db_path = os.path.expanduser(db)
+
+    # ── 预加载模型和索引 ──
     console.print("[bold]🔄 正在加载嵌入模型...[/bold]")
-    cm = _get_cm(db)
-    cm.retriever.rebuild_index()
+    cm = _get_cm(db_path)
+    loaded = cm.retriever.load_index()
+    if loaded:
+        console.print("[dim]✓ FAISS 索引从磁盘加载完成[/dim]")
+    else:
+        console.print("[dim]磁盘无缓存索引，全量重建...[/dim]")
+        cm.retriever.rebuild_index()
     console.print(f"[bold green]✓ 模型就绪！[/bold green] {cm.stats()['nodes']} 个节点已索引")
     cm.close()
 
-    # 确保 socket 目录存在
-    os.makedirs(os.path.dirname(socket_path), exist_ok=True)
+    # ── 启动 Consolidation 调度器 ──
+    from chainmem.consolidation import ConsolidationScheduler
+
+    _scheduler = ConsolidationScheduler(lambda: _get_cm(db_path), db_path)
+    _scheduler.start()
+    console.print("[dim]✓ Consolidation 调度器已启动 (每 4 小时运行一次)[/dim]")
+
+    # ── Unix Socket ──
+    os.makedirs(os.path.dirname(socket_path) or ".", exist_ok=True)
     if os.path.exists(socket_path):
         os.unlink(socket_path)
 
-    async def handle_connection(reader: asyncio.StreamReader,
-                                writer: asyncio.StreamWriter):
-        """处理一个连接：读取 JSON-RPC，处理后返回"""
-        cm_conn = _get_cm(db)  # 轻量连接（不加载模型，复用已缓存的嵌入）
+    async def handle_socket(reader, writer):
+        cm_conn = _get_cm(db_path)
         try:
             while True:
-                line = await reader.readline()
+                line = await asyncio.wait_for(reader.readline(), timeout=30)
                 if not line:
                     break
-                line = line.strip().decode("utf-8")
-                if not line:
+                text = line.strip().decode("utf-8")
+                if not text:
                     continue
                 try:
-                    req = json.loads(line)
-                    await _handle_mcp_request(req, cm_conn, writer)
+                    req = json.loads(text)
+                    await _handle_mcp_request(req, cm_conn, writer, rebuild_index=False)
                 except json.JSONDecodeError:
                     pass
-        except Exception:
+        except (asyncio.TimeoutError, ConnectionResetError, BrokenPipeError):
             pass
         finally:
             cm_conn.close()
             writer.close()
 
+    # ── HTTP 处理器 ──
+    async def handle_http(reader, writer):
+        try:
+            data = await asyncio.wait_for(reader.read(65536), timeout=30)
+            if not data:
+                writer.close()
+                return
+
+            request_text = data.decode("utf-8", errors="replace")
+            lines = request_text.split("\r\n")
+            if not lines:
+                writer.close()
+                return
+
+            first_line = lines[0]
+            method, path, _ = first_line.split(" ", 2)
+            blank_idx = request_text.find("\r\n\r\n")
+            body = request_text[blank_idx + 4:] if blank_idx != -1 else ""
+            path_clean = path.split('?')[0]
+
+            def _http_ok(w, d, ct="application/json"):
+                b = json.dumps(d, ensure_ascii=False).encode("utf-8") if isinstance(d, dict) else d
+                if isinstance(d, dict):
+                    b = json.dumps(d, ensure_ascii=False).encode("utf-8")
+                elif isinstance(d, str):
+                    b = d.encode("utf-8")
+                resp = (
+                    "HTTP/1.1 200 OK\r\n"
+                    f"Content-Type: {ct}\r\n"
+                    f"Content-Length: {len(b)}\r\n"
+                    "Access-Control-Allow-Origin: *\r\n"
+                    "\r\n"
+                ).encode() + b
+                w.write(resp)
+
+            cm_http = _get_cm(db_path)
+
+            if method == "GET" and path == "/health":
+                s = cm_http.stats()
+                _http_ok(writer, {"status": "healthy", "chains": s["chains"],
+                                   "nodes": s["nodes"], "db_path": s["db_path"]})
+
+            elif method == "GET" and path_clean == "/":
+                # ── Web Dashboard ──
+                import importlib.resources as pkg_resources
+                try:
+                    html = pkg_resources.read_text("chainmem.data", "dashboard.html")
+                    b = html.encode("utf-8")
+                    resp = (
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/html; charset=utf-8\r\n"
+                        f"Content-Length: {len(b)}\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "\r\n"
+                    ).encode() + b
+                    writer.write(resp)
+                except Exception:
+                    _http_ok(writer, "<html><body><h1>Dashboard not found</h1></body></html>",
+                              "text/html; charset=utf-8")
+
+            elif method == "GET" and path_clean == "/api/chains":
+                import sqlite3
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT id, anchor_prefix, node_count, tags, created_at
+                    FROM chains ORDER BY created_at DESC LIMIT 200
+                """).fetchall()
+                chains = []
+                for r in rows:
+                    ch = dict(r)
+                    node = conn.execute(
+                        "SELECT text FROM nodes WHERE chain_id=? ORDER BY seq LIMIT 1",
+                        (ch["id"],)
+                    ).fetchone()
+                    ch["preview"] = (node["text"][:200] if node else "")
+                    chains.append(ch)
+                conn.close()
+                _http_ok(writer, {"chains": chains})
+
+            elif method == "GET" and path_clean.startswith("/api/chain/"):
+                import sqlite3
+                chain_id = path_clean[len("/api/chain/"):]
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                row = conn.execute("SELECT * FROM chains WHERE id=?", (chain_id,)).fetchone()
+                if not row:
+                    writer.write(b"HTTP/1.1 404 Not Found\r\n\r\nNot Found")
+                else:
+                    chain = dict(row)
+                    nodes = conn.execute(
+                        "SELECT seq, text FROM nodes WHERE chain_id=? ORDER BY seq",
+                        (chain_id,)
+                    ).fetchall()
+                    chain["nodes"] = [dict(n) for n in nodes]
+                    chain["content"] = "\n".join(n["text"] for n in nodes)
+                    _http_ok(writer, chain)
+                conn.close()
+
+            elif method == "POST" and path_clean == "/api/search":
+                req_body = json.loads(body)
+                query = req_body.get("query", "")
+                tags_str = req_body.get("tags", "")
+                tag_list = [t.strip() for t in tags_str.split(",") if t.strip()]
+                results = cm_http.retrieve(query, tags=tag_list or None)
+                if results:
+                    full_text = "".join(results)
+                    _http_ok(writer, {"results": [{"content": full_text[:500]}]})
+                else:
+                    _http_ok(writer, {"results": []})
+
+            elif method == "POST" and path_clean == "/api/ingest":
+                req_body = json.loads(body)
+                text = req_body.get("text", "")
+                source = req_body.get("source", "dashboard")
+                tags_str = req_body.get("tags", "hermes")
+                tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+                if not text:
+                    _http_ok(writer, {"error": "text is required"})
+                else:
+                    chain = cm_http.ingest(text, source=source, tags=tags)
+                    _http_ok(writer, {
+                        "chain_id": chain.id, "node_count": chain.node_count,
+                        "anchor_prefix": chain.anchor_prefix,
+                    })
+
+            elif method == "POST" and path_clean == "/api/consolidate":
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(None, _scheduler.trigger_now)
+                _http_ok(writer, result)
+
+            elif method == "GET" and path_clean == "/api/consolidation/status":
+                _http_ok(writer, _scheduler.get_status())
+
+            elif method == "OPTIONS":
+                writer.write(b"HTTP/1.1 204 No Content\r\n"
+                             b"Access-Control-Allow-Origin: *\r\n"
+                             b"Access-Control-Allow-Methods: POST, GET, OPTIONS\r\n"
+                             b"Access-Control-Allow-Headers: Content-Type\r\n\r\n")
+
+            else:
+                writer.write(b"HTTP/1.1 404 Not Found\r\n\r\nNot Found")
+
+            await writer.drain()
+            cm_http.close()
+
+        except (asyncio.TimeoutError, ConnectionResetError, BrokenPipeError):
+            pass
+        except Exception as e:
+            print(f"HTTP 处理错误: {e}", file=sys.stderr)
+        finally:
+            try:
+                writer.close()
+            except:
+                pass
+
+    # ── 启动服务 ──
     async def server_main():
-        server = await asyncio.start_unix_server(handle_connection, path=socket_path)
-        os.chmod(socket_path, 0o666)  # 多用户可访问
-        addr = server.sockets[0].getsockname()
+        tasks = []
+
+        # Unix socket
+        socket_server = await asyncio.start_unix_server(handle_socket, path=socket_path)
+        os.chmod(socket_path, 0o666)
+        console.print(f"  [bold]Unix Socket:[/bold] {socket_path}")
+        tasks.append(socket_server.serve_forever())
+
+        # HTTP
+        if http_port and http_port > 0:
+            http_server = await asyncio.start_server(handle_http, "127.0.0.1", http_port)
+            console.print(f"  [bold]HTTP:[/bold]         http://127.0.0.1:{http_port}/")
+            console.print(f"  [bold]Dashboard:[/bold]    http://127.0.0.1:{http_port}/")
+            tasks.append(http_server.serve_forever())
+
         console.print(f"[bold green]✅ ChainMem MCP 服务启动！[/bold green]")
-        console.print(f"  socket: [bold]{socket_path}[/bold]")
         console.print(f"  模型: all-MiniLM-L6-v2 (已加载)")
-        console.print(f"  数据库: {db}")
-        async with server:
-            await server.serve_forever()
+        console.print(f"  数据库: {db_path}")
+
+        await asyncio.gather(*tasks)
 
     asyncio.run(server_main())
 

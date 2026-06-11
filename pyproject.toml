@@ -48,3 +48,6 @@ Documentation = "https://github.com/yabolee-kkk/chainmem#readme"
 
 [project.scripts]
 chainmem = "chainmem.cli.app:app"
+
+[tool.setuptools.package-data]
+chainmem = ["data/*"]
