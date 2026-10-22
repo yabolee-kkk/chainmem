@@ -185,6 +185,8 @@ pi mcp list --json
 Codex 等 Streamable HTTP MCP 客户端会在 `initialize` 后发送
 `notifications/initialized`。该通知必须返回 HTTP `202 Accepted` 且响应体为空；
 不能返回 `200` 加空 JSON `{}`，否则客户端会因 JSON-RPC 反序列化失败而断开。
+服务端每个 HTTP 连接只处理一个请求，因此响应还必须带
+`Connection: close`，避免客户端复用已经关闭的连接。
 
 ## 可用工具
 

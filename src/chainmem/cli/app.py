@@ -432,6 +432,7 @@ def serve(
                     f"HTTP/1.1 {status} {reason}\r\n"
                     f"Content-Type: {ct}\r\n"
                     f"Content-Length: {len(b)}\r\n"
+                    "Connection: close\r\n"
                     "Access-Control-Allow-Origin: *\r\n"
                     "\r\n"
                 ).encode() + b
@@ -443,6 +444,7 @@ def serve(
                     (
                         f"HTTP/1.1 {status} {reason}\r\n"
                         "Content-Length: 0\r\n"
+                        "Connection: close\r\n"
                         "Access-Control-Allow-Origin: *\r\n"
                         "\r\n"
                     ).encode()
