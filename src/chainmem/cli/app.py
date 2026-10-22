@@ -437,6 +437,17 @@ def serve(
                 ).encode() + b
                 w.write(resp)
 
+            def _http_no_content(w, status=202):
+                reason = "Accepted" if status == 202 else "No Content"
+                w.write(
+                    (
+                        f"HTTP/1.1 {status} {reason}\r\n"
+                        "Content-Length: 0\r\n"
+                        "Access-Control-Allow-Origin: *\r\n"
+                        "\r\n"
+                    ).encode()
+                )
+
             cm_http = _get_cm(db_path)
 
             if method == "GET" and path == "/health":
@@ -468,6 +479,12 @@ def serve(
                         await writer.drain()
                         cm_http.close()
                         return
+
+                if "id" not in req_body:
+                    _http_no_content(writer, 202)
+                    await writer.drain()
+                    cm_http.close()
+                    return
 
                 def send_mcp_response(req_id, result):
                     nonlocal mcp_response
