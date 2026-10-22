@@ -180,6 +180,12 @@ pi mcp list --json
 
 配置保存在 `~/.pi/agent/mcp.json`，权限应为 `600`。
 
+### Streamable HTTP 通知语义
+
+Codex 等 Streamable HTTP MCP 客户端会在 `initialize` 后发送
+`notifications/initialized`。该通知必须返回 HTTP `202 Accepted` 且响应体为空；
+不能返回 `200` 加空 JSON `{}`，否则客户端会因 JSON-RPC 反序列化失败而断开。
+
 ## 可用工具
 
 | 工具 | 功能 | 参数 |

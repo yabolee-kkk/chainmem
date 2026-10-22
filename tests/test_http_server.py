@@ -13,14 +13,24 @@ import urllib.request
 from datetime import datetime, timezone
 
 
+_LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
 
 
-def _post_mcp(port: int, payload: dict, token: str | None = None) -> dict:
-    headers = {"Content-Type": "application/json"}
+def _post_mcp_raw(
+    port: int,
+    payload: dict,
+    token: str | None = None,
+) -> tuple[int, bytes]:
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(
@@ -29,9 +39,14 @@ def _post_mcp(port: int, payload: dict, token: str | None = None) -> dict:
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        assert response.status == 200
-        return json.loads(response.read())
+    with _LOCAL_OPENER.open(request, timeout=10) as response:
+        return response.status, response.read()
+
+
+def _post_mcp(port: int, payload: dict, token: str | None = None) -> dict:
+    status, body = _post_mcp_raw(port, payload, token=token)
+    assert status == 200
+    return json.loads(body)
 
 
 def test_http_mcp_endpoint_lists_tools(tmp_path):
@@ -59,7 +74,7 @@ def test_http_mcp_endpoint_lists_tools(tmp_path):
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(
+                with _LOCAL_OPENER.open(
                     f"http://127.0.0.1:{port}/health", timeout=2
                 ) as response:
                     if response.status == 200:
@@ -103,7 +118,7 @@ def _wait_for_health(port: int, process: subprocess.Popen) -> None:
         if process.poll() is not None:
             raise AssertionError("ChainMem server exited before becoming healthy")
         try:
-            with urllib.request.urlopen(
+            with _LOCAL_OPENER.open(
                 f"http://127.0.0.1:{port}/health", timeout=2
             ) as response:
                 if response.status == 200:
@@ -141,6 +156,35 @@ def test_http_work_memory_authentication_and_identity(tmp_path):
 
     try:
         _wait_for_health(port, process)
+        initialize_status, initialize_body = _post_mcp_raw(
+            port,
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"},
+                },
+            },
+            token="hermes-token",
+        )
+        assert initialize_status == 200
+        assert json.loads(initialize_body)["result"]["serverInfo"]["name"] == "chainmem"
+
+        notification_status, notification_body = _post_mcp_raw(
+            port,
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            },
+            token="hermes-token",
+        )
+        assert notification_status == 202
+        assert notification_body == b""
+
         tools_request = {
             "jsonrpc": "2.0",
             "id": 1,
