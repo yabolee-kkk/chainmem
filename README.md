@@ -74,6 +74,7 @@ ChainMem 用**链式结构**模拟人脑的联想回忆：
 | 🚀 **秒级启动** | FAISS 索引持久化，重启从 60s → 1s |
 | 🏷️ **标签分类** | 按项目/主题组织记忆 |
 | 🔌 **MCP 协议** | 支持 HTTP + Unix Socket 双传输，原生集成 Hermes Agent 等 AI Agent（[配置指南](docs/mcp-integration.md)） |
+| 🧑‍💻 **跨 Agent 工作记忆** | 记录谁在何时完成了哪项工作，支持按项目、时间和语义线索回忆（[使用指南](docs/work-memory.md)） |
 | 🖥️ **Web 仪表盘** | 内置管理界面 `http://127.0.0.1:3115/`，可视化浏览、搜索、新建记忆 |
 | 🐍 **Python SDK** | 一句话集成到你的项目 |
 
@@ -315,6 +316,18 @@ mcp_servers:
 | `chainmem_ingest(text, source, tags)` | 结链：存储记忆 |
 | `chainmem_retrieve(query, tags)` | 追溯：检索记忆（支持标签过滤） |
 | `chainmem_stats()` | 统计：查看记忆库状态 |
+
+ChainMem 还提供四个跨 Agent 工作记忆工具：
+
+| 工具 | 功能 |
+|:-----|:-----|
+| `work_memory_record` | 记录工作事件、Agent、项目和产出 |
+| `work_memory_recall` | 根据模糊线索回忆过去的工作 |
+| `work_memory_timeline` | 按时间线查看近期工作 |
+| `work_memory_get` | 读取单条工作事件的完整信息 |
+
+局域网 HTTP MCP 使用 Agent Token 确认身份，完整配置见
+[工作记忆指南](docs/work-memory.md)。
 
 ---
 

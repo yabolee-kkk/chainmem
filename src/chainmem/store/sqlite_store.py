@@ -6,6 +6,8 @@ import sqlite3
 from typing import Optional
 import numpy as np
 
+from chainmem.work_memory import parse_work_event
+
 
 class SQLiteStore:
     """SQLite 存储，管理 nodes 和 chains 两张表"""
@@ -51,6 +53,38 @@ class SQLiteStore:
 
             CREATE INDEX IF NOT EXISTS idx_nodes_chain ON nodes(chain_id, seq);
             CREATE INDEX IF NOT EXISTS idx_nodes_next ON nodes(next_id);
+
+            CREATE TABLE IF NOT EXISTS work_events (
+                id             TEXT PRIMARY KEY,
+                agent_id       TEXT NOT NULL,
+                host           TEXT NOT NULL DEFAULT '',
+                session_id     TEXT NOT NULL DEFAULT '',
+                project        TEXT NOT NULL DEFAULT '',
+                task_summary   TEXT NOT NULL,
+                status         TEXT NOT NULL DEFAULT 'unknown',
+                artifacts_json TEXT NOT NULL DEFAULT '[]',
+                tags_json      TEXT NOT NULL DEFAULT '[]',
+                raw_chain_id   TEXT DEFAULT NULL,
+                source         TEXT NOT NULL DEFAULT '',
+                started_at     TEXT DEFAULT NULL,
+                ended_at       TEXT DEFAULT NULL,
+                occurred_at    TEXT NOT NULL,
+                created_at     TEXT NOT NULL,
+                content_hash   TEXT NOT NULL,
+                visibility     TEXT NOT NULL DEFAULT 'shared',
+                UNIQUE(agent_id, session_id, content_hash)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_work_events_occurred
+                ON work_events(occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_work_events_agent
+                ON work_events(agent_id, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_work_events_project
+                ON work_events(project, occurred_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_work_events_session
+                ON work_events(session_id);
+            CREATE INDEX IF NOT EXISTS idx_work_events_chain
+                ON work_events(raw_chain_id);
         """)
         self.conn.commit()
 
@@ -142,6 +176,120 @@ class SQLiteStore:
             "SELECT id, chain_id, seq, text, prev_id, next_id, encrypted, encryption_iv FROM nodes ORDER BY seq"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── Work event CRUD ──
+
+    def save_work_event(self, event: dict) -> dict:
+        self.conn.execute(
+            """INSERT OR IGNORE INTO work_events
+               (id, agent_id, host, session_id, project, task_summary, status,
+                artifacts_json, tags_json, raw_chain_id, source, started_at,
+                ended_at, occurred_at, created_at, content_hash, visibility)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                event["id"],
+                event["agent_id"],
+                event.get("host", ""),
+                event.get("session_id", ""),
+                event.get("project", ""),
+                event["task_summary"],
+                event.get("status", "unknown"),
+                json.dumps(event.get("artifacts", []), ensure_ascii=False),
+                json.dumps(event.get("tags", []), ensure_ascii=False),
+                event.get("raw_chain_id"),
+                event.get("source", ""),
+                event.get("started_at"),
+                event.get("ended_at"),
+                event["occurred_at"],
+                event["created_at"],
+                event["content_hash"],
+                event.get("visibility", "shared"),
+            ),
+        )
+        self.conn.commit()
+        saved = self.get_work_event(event["id"])
+        if saved is not None:
+            return saved
+
+        existing = self.conn.execute(
+            """SELECT * FROM work_events
+               WHERE agent_id=? AND session_id=? AND content_hash=?""",
+            (
+                event["agent_id"],
+                event.get("session_id", ""),
+                event["content_hash"],
+            ),
+        ).fetchone()
+        if existing is None:
+            raise RuntimeError("work event was not saved")
+        return parse_work_event(existing)
+
+    def update_work_event_chain(self, event_id: str, chain_id: str) -> None:
+        self.conn.execute(
+            "UPDATE work_events SET raw_chain_id=? WHERE id=?",
+            (chain_id, event_id),
+        )
+        self.conn.commit()
+
+    def get_work_event(self, event_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM work_events WHERE id=?",
+            (event_id,),
+        ).fetchone()
+        return parse_work_event(row) if row is not None else None
+
+    def find_work_event(
+        self,
+        agent_id: str,
+        session_id: str,
+        content_hash: str,
+    ) -> dict | None:
+        row = self.conn.execute(
+            """SELECT * FROM work_events
+               WHERE agent_id=? AND session_id=? AND content_hash=?""",
+            (agent_id, session_id, content_hash),
+        ).fetchone()
+        return parse_work_event(row) if row is not None else None
+
+    def list_work_events(
+        self,
+        *,
+        since: str | None = None,
+        agent_id: str | None = None,
+        project: str | None = None,
+        status: str | None = None,
+        limit: int = 30,
+        include_private_for: str | None = None,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list[object] = []
+
+        if include_private_for:
+            clauses.append("(visibility='shared' OR agent_id=?)")
+            params.append(include_private_for)
+        else:
+            clauses.append("visibility='shared'")
+        if since:
+            clauses.append("occurred_at>=?")
+            params.append(since)
+        if agent_id:
+            clauses.append("agent_id=?")
+            params.append(agent_id)
+        if project:
+            clauses.append("project=?")
+            params.append(project)
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+
+        sql = "SELECT * FROM work_events"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY occurred_at DESC LIMIT ?"
+        params.append(max(1, min(int(limit), 50)))
+
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        return [parse_work_event(row) for row in rows]
 
     def stats(self) -> dict:
         chain_count = self.conn.execute("SELECT COUNT(*) FROM chains").fetchone()[0]

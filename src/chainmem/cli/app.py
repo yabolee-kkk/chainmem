@@ -21,9 +21,23 @@ console = Console()
 DEFAULT_DB = "~/.chainmem/data.db"
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
 def _get_cm(db: str | None = None) -> ChainMemory:
     cm = ChainMemory(db_path=db or DEFAULT_DB)
     return cm.open()
+
+
+work_app = typer.Typer(help="跨 Agent 工作记忆")
+app.add_typer(work_app, name="work")
 
 
 @app.command()
@@ -115,6 +129,133 @@ def stats(
                    f"[dim]{c['created_at']}[/dim]")
 
 
+@work_app.command("record")
+def work_record(
+    task_summary: str = typer.Argument(..., help="任务摘要"),
+    agent_id: str = typer.Option(..., "--agent-id", help="Agent 身份"),
+    project: str = typer.Option("", "--project", help="项目名称"),
+    host: str = typer.Option("", "--host", help="机器名称"),
+    session_id: str = typer.Option("", "--session-id", help="会话 ID"),
+    status: str = typer.Option("unknown", "--status", help="工作状态"),
+    artifacts: str = typer.Option("", "--artifacts", help="产出物（逗号分隔）"),
+    tags: str = typer.Option("", "--tags", help="标签（逗号分隔）"),
+    source: str = typer.Option("", "--source", help="来源"),
+    occurred_at: str | None = typer.Option(None, "--occurred-at", help="发生时间 ISO 8601"),
+    raw_text: str | None = typer.Option(None, "--raw-text", help="可选原始对话"),
+    visibility: str = typer.Option("shared", "--visibility", help="shared 或 private"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """记录一条工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        event = cm.record_work_event(
+            agent_id=agent_id,
+            task_summary=task_summary,
+            host=host,
+            session_id=session_id,
+            project=project,
+            status=status,
+            artifacts=_as_string_list(artifacts),
+            tags=_as_string_list(tags),
+            source=source,
+            occurred_at=occurred_at,
+            raw_text=raw_text,
+            visibility=visibility,
+        )
+        rprint(Panel(format_work_event(event), title="工作事件已记录"))
+    finally:
+        cm.close()
+
+
+@work_app.command("recall")
+def work_recall(
+    query: str = typer.Argument(..., help="模糊回忆线索"),
+    days: int = typer.Option(7, "--days", help="查询最近多少天"),
+    limit: int = typer.Option(5, "--limit", help="最多返回条数"),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Agent 过滤或私有事件身份"),
+    project: str | None = typer.Option(None, "--project", help="项目过滤"),
+    status: str | None = typer.Option(None, "--status", help="状态过滤"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """根据线索回忆过去的工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        events = cm.recall_work_events(
+            query=query,
+            days=days,
+            agent_id=agent_id,
+            project=project,
+            status=status,
+            limit=limit,
+            include_private_for=agent_id,
+        )
+        if not events:
+            rprint("[yellow]未找到匹配的工作记忆[/yellow]")
+            return
+        rprint("[bold]回忆到以下工作事件（不是知识库事实）：[/bold]\n")
+        for event in events:
+            rprint(format_work_event(event, include_score=True))
+            rprint()
+    finally:
+        cm.close()
+
+
+@work_app.command("timeline")
+def work_timeline(
+    days: int = typer.Option(7, "--days", help="查询最近多少天"),
+    limit: int = typer.Option(30, "--limit", help="最多返回条数"),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Agent 过滤或私有事件身份"),
+    project: str | None = typer.Option(None, "--project", help="项目过滤"),
+    status: str | None = typer.Option(None, "--status", help="状态过滤"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """按时间倒序查看工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        events = cm.list_work_events(
+            days=days,
+            agent_id=agent_id,
+            project=project,
+            status=status,
+            limit=limit,
+            include_private_for=agent_id,
+        )
+        if not events:
+            rprint("[yellow]未找到工作事件[/yellow]")
+            return
+        for event in events:
+            rprint(format_work_event(event))
+            rprint()
+    finally:
+        cm.close()
+
+
+@work_app.command("get")
+def work_get(
+    event_id: str = typer.Argument(..., help="工作事件 ID"),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="私有事件所属 Agent"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """读取单条工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        event = cm.get_work_event(event_id, include_private_for=agent_id)
+        if event is None:
+            rprint("[yellow]工作事件不存在或无权访问[/yellow]")
+            raise typer.Exit(1)
+        rprint(format_work_event(event))
+    finally:
+        cm.close()
+
+
 @app.command()
 def demo():
     """运行快速演示"""
@@ -166,8 +307,15 @@ def mcp(
 def serve(
     socket_path: str = typer.Option("/tmp/chainmem.sock", "--socket", "-s",
                                     help="Unix socket 路径"),
+    http_host: str = typer.Option("127.0.0.1", "--http-host",
+                                   help="HTTP 监听地址"),
     http_port: int = typer.Option(3115, "--http-port", "-p",
                                    help="HTTP 端口（设 0 禁用 HTTP）"),
+    agent_tokens_file: str | None = typer.Option(
+        None,
+        "--agent-tokens-file",
+        help="Agent Token 文件（每行 agent-id:token，权限 600）",
+    ),
     db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
 ):
     """启动持久化 MCP 服务（Unix socket + 可选的 HTTP/Web Dashboard）
@@ -183,6 +331,22 @@ def serve(
     import asyncio
     import json
     import os
+    import ipaddress
+
+    from chainmem.auth import authenticate_token, load_agent_tokens
+
+    try:
+        is_loopback = ipaddress.ip_address(http_host).is_loopback
+    except ValueError:
+        is_loopback = http_host == "localhost"
+
+    agent_registry: dict[str, str] = {}
+    if agent_tokens_file:
+        agent_registry = load_agent_tokens(agent_tokens_file)
+    elif http_port > 0 and not is_loopback:
+        raise typer.BadParameter(
+            "--agent-tokens-file is required when --http-host is not loopback"
+        )
 
     db_path = os.path.expanduser(db)
 
@@ -247,18 +411,25 @@ def serve(
 
             first_line = lines[0]
             method, path, _ = first_line.split(" ", 2)
+            headers = {}
+            for line in lines[1:]:
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                headers[key.strip().lower()] = value.strip()
             blank_idx = request_text.find("\r\n\r\n")
             body = request_text[blank_idx + 4:] if blank_idx != -1 else ""
             path_clean = path.split('?')[0]
 
-            def _http_ok(w, d, ct="application/json"):
+            def _http_ok(w, d, ct="application/json", status=200):
                 b = json.dumps(d, ensure_ascii=False).encode("utf-8") if isinstance(d, dict) else d
                 if isinstance(d, dict):
                     b = json.dumps(d, ensure_ascii=False).encode("utf-8")
                 elif isinstance(d, str):
                     b = d.encode("utf-8")
+                reason = "OK" if status == 200 else "Unauthorized"
                 resp = (
-                    "HTTP/1.1 200 OK\r\n"
+                    f"HTTP/1.1 {status} {reason}\r\n"
                     f"Content-Type: {ct}\r\n"
                     f"Content-Length: {len(b)}\r\n"
                     "Access-Control-Allow-Origin: *\r\n"
@@ -276,6 +447,27 @@ def serve(
             elif method == "POST" and path_clean == "/mcp":
                 req_body = json.loads(body)
                 mcp_response = {}
+                authenticated_agent = None
+                if agent_registry:
+                    authorization = headers.get("authorization", "")
+                    token = (
+                        authorization[7:].strip()
+                        if authorization.lower().startswith("bearer ")
+                        else ""
+                    )
+                    authenticated_agent = authenticate_token(
+                        agent_registry,
+                        token,
+                    )
+                    if authenticated_agent is None:
+                        _http_ok(
+                            writer,
+                            {"error": "unauthorized"},
+                            status=401,
+                        )
+                        await writer.drain()
+                        cm_http.close()
+                        return
 
                 def send_mcp_response(req_id, result):
                     nonlocal mcp_response
@@ -295,6 +487,7 @@ def serve(
                     send_mcp_response,
                     send_mcp_error,
                     rebuild_index=False,
+                    agent_id=authenticated_agent,
                 )
                 _http_ok(writer, mcp_response)
 
@@ -424,9 +617,13 @@ def serve(
 
         # HTTP
         if http_port and http_port > 0:
-            http_server = await asyncio.start_server(handle_http, "127.0.0.1", http_port)
-            console.print(f"  [bold]HTTP:[/bold]         http://127.0.0.1:{http_port}/")
-            console.print(f"  [bold]Dashboard:[/bold]    http://127.0.0.1:{http_port}/")
+            http_server = await asyncio.start_server(
+                handle_http,
+                http_host,
+                http_port,
+            )
+            console.print(f"  [bold]HTTP:[/bold]         http://{http_host}:{http_port}/")
+            console.print(f"  [bold]Dashboard:[/bold]    http://{http_host}:{http_port}/")
             tasks.append(http_server.serve_forever())
 
         console.print(f"[bold green]✅ ChainMem MCP 服务启动！[/bold green]")
@@ -632,7 +829,8 @@ def _run_mcp_stdio(db: str):
 
 
 async def _handle_mcp_request(req: dict, cm, writer: asyncio.StreamWriter,
-                              rebuild_index: bool = True):
+                              rebuild_index: bool = True,
+                              agent_id: str | None = None):
     """异步版 MCP 请求处理（serve 模式用）"""
     import json
 
@@ -645,12 +843,13 @@ async def _handle_mcp_request(req: dict, cm, writer: asyncio.StreamWriter,
         writer.write((msg + "\n").encode("utf-8"))
 
     _process_mcp_request(req, lambda: cm, send_response, send_error,
-                         rebuild_index=rebuild_index)
+                         rebuild_index=rebuild_index, agent_id=agent_id)
     await writer.drain()
 
 
 def _process_mcp_request(req: dict, get_cm, send_response, send_error,
-                         rebuild_index: bool = True):
+                         rebuild_index: bool = True,
+                         agent_id: str | None = None):
     """MCP 请求处理核心（stdio 和 serve 模式共用）
 
     rebuild_index: True 则在每次 retrieve 前重建索引（stdio 模式），
@@ -695,6 +894,80 @@ def _process_mcp_request(req: dict, get_cm, send_response, send_error,
                     "inputSchema": {
                         "type": "object",
                         "properties": {},
+                    },
+                },
+                {
+                    "name": "work_memory_record",
+                    "description": "记录一条跨 Agent 工作事件",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {
+                                "type": "string",
+                                "description": "Agent 身份；HTTP Token 模式下会被服务端身份覆盖",
+                            },
+                            "task_summary": {"type": "string"},
+                            "host": {"type": "string"},
+                            "session_id": {"type": "string"},
+                            "project": {"type": "string"},
+                            "status": {"type": "string"},
+                            "artifacts": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "source": {"type": "string"},
+                            "occurred_at": {"type": "string"},
+                            "started_at": {"type": "string"},
+                            "ended_at": {"type": "string"},
+                            "raw_text": {"type": "string"},
+                            "visibility": {"type": "string"},
+                        },
+                        "required": ["task_summary"],
+                    },
+                },
+                {
+                    "name": "work_memory_recall",
+                    "description": "根据模糊描述回忆过去的工作事件",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "days": {"type": "integer"},
+                            "limit": {"type": "integer"},
+                            "agent_id": {"type": "string"},
+                            "project": {"type": "string"},
+                            "status": {"type": "string"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "work_memory_timeline",
+                    "description": "按时间线查看近期 Agent 工作事件",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "days": {"type": "integer"},
+                            "limit": {"type": "integer"},
+                            "agent_id": {"type": "string"},
+                            "project": {"type": "string"},
+                            "status": {"type": "string"},
+                        },
+                    },
+                },
+                {
+                    "name": "work_memory_get",
+                    "description": "读取单条工作事件的完整信息",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "event_id": {"type": "string"},
+                        },
+                        "required": ["event_id"],
                     },
                 },
             ]
@@ -744,6 +1017,108 @@ def _process_mcp_request(req: dict, get_cm, send_response, send_error,
             send_response(req_id, {
                 "content": [{"type": "text", "text": text}]
             })
+
+        elif tool_name == "work_memory_record":
+            from chainmem.work_memory import format_work_event
+
+            identity = agent_id or arguments.get("agent_id")
+            if not identity:
+                send_error(req_id, -32602, "work_memory_record requires agent_id")
+            else:
+                try:
+                    event = get_cm().record_work_event(
+                        agent_id=identity,
+                        task_summary=arguments.get("task_summary", ""),
+                        host=arguments.get("host", ""),
+                        session_id=arguments.get("session_id", ""),
+                        project=arguments.get("project", ""),
+                        status=arguments.get("status", "unknown"),
+                        artifacts=_as_string_list(arguments.get("artifacts")),
+                        tags=_as_string_list(arguments.get("tags")),
+                        source=arguments.get("source", ""),
+                        occurred_at=arguments.get("occurred_at"),
+                        started_at=arguments.get("started_at"),
+                        ended_at=arguments.get("ended_at"),
+                        raw_text=arguments.get("raw_text"),
+                        visibility=arguments.get("visibility", "shared"),
+                    )
+                    send_response(req_id, {
+                        "content": [{
+                            "type": "text",
+                            "text": format_work_event(event),
+                        }]
+                    })
+                except Exception as exc:
+                    send_error(req_id, -32602, str(exc))
+
+        elif tool_name == "work_memory_recall":
+            from chainmem.work_memory import format_work_event
+
+            identity = agent_id or arguments.get("agent_id")
+            try:
+                events = get_cm().recall_work_events(
+                    query=arguments.get("query", ""),
+                    days=int(arguments.get("days", 7)),
+                    agent_id=arguments.get("agent_id"),
+                    project=arguments.get("project"),
+                    status=arguments.get("status"),
+                    limit=int(arguments.get("limit", 5)),
+                    include_private_for=identity,
+                )
+                if not events:
+                    text = "未找到匹配的工作记忆。"
+                else:
+                    text = "回忆到以下工作事件（不是知识库事实）：\n\n" + "\n\n".join(
+                        format_work_event(event, include_score=True)
+                        for event in events
+                    )
+                send_response(req_id, {
+                    "content": [{"type": "text", "text": text}]
+                })
+            except Exception as exc:
+                send_error(req_id, -32602, str(exc))
+
+        elif tool_name == "work_memory_timeline":
+            from chainmem.work_memory import format_work_event
+
+            identity = agent_id or arguments.get("agent_id")
+            try:
+                events = get_cm().list_work_events(
+                    days=int(arguments.get("days", 7)),
+                    agent_id=arguments.get("agent_id"),
+                    project=arguments.get("project"),
+                    status=arguments.get("status"),
+                    limit=int(arguments.get("limit", 30)),
+                    include_private_for=identity,
+                )
+                text = (
+                    "未找到工作事件。"
+                    if not events
+                    else "\n\n".join(format_work_event(event) for event in events)
+                )
+                send_response(req_id, {
+                    "content": [{"type": "text", "text": text}]
+                })
+            except Exception as exc:
+                send_error(req_id, -32602, str(exc))
+
+        elif tool_name == "work_memory_get":
+            from chainmem.work_memory import format_work_event
+
+            identity = agent_id or arguments.get("agent_id")
+            event = get_cm().get_work_event(
+                arguments.get("event_id", ""),
+                include_private_for=identity,
+            )
+            if event is None:
+                send_error(req_id, -32602, "work event not found")
+            else:
+                send_response(req_id, {
+                    "content": [{
+                        "type": "text",
+                        "text": format_work_event(event),
+                    }]
+                })
 
         else:
             send_error(req_id, -32601, f"未知工具: {tool_name}")
