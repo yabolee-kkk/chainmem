@@ -108,6 +108,38 @@ Pi Agent 接入 ChainMem MCP
 
 并通过 `codex` 身份成功回忆，确认 Pi Token 映射和跨 Agent 回忆均正常。
 
+## Codex CLI 接入
+
+- Codex CLI：`0.163.0`
+- 配置文件：`/home/borong/.codex/config.toml`
+- 配置备份：`/home/borong/.codex/config.toml.bak.chainmem.20261022-134955`
+- MCP 地址：`http://192.168.1.31:3115/mcp`
+- 认证 helper：`/home/borong/.codex/bin/chainmem-mcp-headers`
+- 本机 Token 文件：`/home/borong/.chainmem/codex.token`
+- helper 权限：`700`
+- Token 权限：`600`
+- 只读工具审批：`approve`
+- 写入工具：保留默认审批
+
+Codex MCP 客户端实测完成握手并调用 `chainmem_stats`，返回：
+
+```text
+链数：2
+节点数：11
+数据库路径：/home/boronglee/.chainmem/data.db
+```
+
+接入过程中修复了两处 Streamable HTTP 兼容问题：
+
+- `notifications/initialized` 返回 `202 Accepted` 且无响应体
+- 单请求连接明确发送 `Connection: close`
+
+对应提交：
+
+- `a95c353 fix: return 202 for MCP initialized notifications`
+- `0fa09fd fix: close MCP HTTP connections explicitly`
+- `11165d4 fix: complete Codex MCP HTTP compatibility`
+
 ## 回滚步骤
 
 ### 恢复服务和数据库

@@ -180,6 +180,42 @@ pi mcp list --json
 
 配置保存在 `~/.pi/agent/mcp.json`，权限应为 `600`。
 
+### Codex CLI
+
+Codex CLI 使用 `~/.codex/config.toml`。推荐通过本地 helper 动态提供
+Bearer Token，不要把 Token 直接写进配置：
+
+```toml
+[mcp_servers.chainmem]
+url = "http://192.168.1.31:3115/mcp"
+http_headers_helper = "/path/to/chainmem-mcp-headers"
+startup_timeout_sec = 30
+tool_timeout_sec = 60
+required = false
+```
+
+只读工具应显式允许执行，写入工具仍保留默认审批：
+
+```toml
+[mcp_servers.chainmem.tools.chainmem_stats]
+approval_mode = "approve"
+
+[mcp_servers.chainmem.tools.chainmem_retrieve]
+approval_mode = "approve"
+
+[mcp_servers.chainmem.tools.work_memory_recall]
+approval_mode = "approve"
+
+[mcp_servers.chainmem.tools.work_memory_timeline]
+approval_mode = "approve"
+
+[mcp_servers.chainmem.tools.work_memory_get]
+approval_mode = "approve"
+```
+
+使用 `codex mcp list` 检查服务器是否加载。Codex 0.163.0 实测可连接
+ChainMem 并调用 `chainmem_stats`。
+
 ### Streamable HTTP 通知语义
 
 Codex 等 Streamable HTTP MCP 客户端会在 `initialize` 后发送
