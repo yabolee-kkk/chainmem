@@ -122,6 +122,28 @@ sudo systemctl restart hermes-gateway-xxx
 /reload-mcp
 ```
 
+### HTTP 传输
+
+启动同时提供 HTTP MCP 和 Web Dashboard 的服务：
+
+```bash
+chainmem serve \
+  --socket /tmp/chainmem.sock \
+  --http-port 3115 \
+  --db "$HOME/.chainmem/data.db"
+```
+
+MCP 客户端使用以下配置：
+
+```yaml
+mcp_servers:
+  chainmem:
+    url: http://127.0.0.1:3115/mcp
+    transport: http
+```
+
+HTTP 服务默认只监听 `127.0.0.1:3115`，不会直接暴露到局域网。需要跨机器访问时，应通过带身份认证的反向代理或 MCP 网关转发，不要直接将无认证端口绑定到公网或不可信局域网。
+
 ## 可用工具
 
 | 工具 | 功能 | 参数 |

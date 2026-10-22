@@ -273,6 +273,31 @@ def serve(
                 _http_ok(writer, {"status": "healthy", "chains": s["chains"],
                                    "nodes": s["nodes"], "db_path": s["db_path"]})
 
+            elif method == "POST" and path_clean == "/mcp":
+                req_body = json.loads(body)
+                mcp_response = {}
+
+                def send_mcp_response(req_id, result):
+                    nonlocal mcp_response
+                    mcp_response = {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+                def send_mcp_error(req_id, code, message):
+                    nonlocal mcp_response
+                    mcp_response = {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"code": code, "message": message},
+                    }
+
+                _process_mcp_request(
+                    req_body,
+                    lambda: cm_http,
+                    send_mcp_response,
+                    send_mcp_error,
+                    rebuild_index=False,
+                )
+                _http_ok(writer, mcp_response)
+
             elif method == "GET" and path_clean == "/":
                 # ── Web Dashboard ──
                 import importlib.resources as pkg_resources
