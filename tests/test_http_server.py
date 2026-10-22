@@ -26,7 +26,7 @@ def _post_mcp_raw(
     port: int,
     payload: dict,
     token: str | None = None,
-) -> tuple[int, bytes]:
+) -> tuple[int, dict[str, str], bytes]:
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
@@ -40,11 +40,11 @@ def _post_mcp_raw(
         method="POST",
     )
     with _LOCAL_OPENER.open(request, timeout=10) as response:
-        return response.status, response.read()
+        return response.status, dict(response.headers), response.read()
 
 
 def _post_mcp(port: int, payload: dict, token: str | None = None) -> dict:
-    status, body = _post_mcp_raw(port, payload, token=token)
+    status, _, body = _post_mcp_raw(port, payload, token=token)
     assert status == 200
     return json.loads(body)
 
@@ -156,7 +156,7 @@ def test_http_work_memory_authentication_and_identity(tmp_path):
 
     try:
         _wait_for_health(port, process)
-        initialize_status, initialize_body = _post_mcp_raw(
+        initialize_status, initialize_headers, initialize_body = _post_mcp_raw(
             port,
             {
                 "jsonrpc": "2.0",
@@ -171,9 +171,10 @@ def test_http_work_memory_authentication_and_identity(tmp_path):
             token="hermes-token",
         )
         assert initialize_status == 200
+        assert initialize_headers.get("Connection") == "close"
         assert json.loads(initialize_body)["result"]["serverInfo"]["name"] == "chainmem"
 
-        notification_status, notification_body = _post_mcp_raw(
+        notification_status, notification_headers, notification_body = _post_mcp_raw(
             port,
             {
                 "jsonrpc": "2.0",
@@ -183,6 +184,7 @@ def test_http_work_memory_authentication_and_identity(tmp_path):
             token="hermes-token",
         )
         assert notification_status == 202
+        assert notification_headers.get("Connection") == "close"
         assert notification_body == b""
 
         tools_request = {
