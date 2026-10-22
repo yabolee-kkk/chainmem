@@ -116,3 +116,69 @@ def test_list_work_events_filters_days_agent_project_status(tmp_path):
     )
     assert [item["task_summary"] for item in results] == ["ChainMem 部署"]
     store.close()
+
+
+def test_record_work_event_creates_linked_chain(tmp_path):
+    from chainmem import ChainMemory
+
+    cm = ChainMemory(db_path=str(tmp_path / "data.db")).open()
+    event = cm.record_work_event(
+        agent_id="hermes",
+        task_summary="部署 ChainMem 工作记忆",
+        project="chainmem",
+        status="done",
+        tags=["部署"],
+        occurred_at="2026-10-22T02:00:00Z",
+    )
+    assert event["raw_chain_id"]
+    chain = cm.store.get_chain(event["raw_chain_id"])
+    assert chain["source"] == f"work-memory:{event['id']}"
+    cm.close()
+
+
+def test_recall_work_events_returns_agent_and_filters(tmp_path):
+    from chainmem import ChainMemory
+
+    cm = ChainMemory(db_path=str(tmp_path / "data.db")).open()
+    cm.record_work_event(
+        agent_id="hermes",
+        task_summary="完成 ChainMem 局域网部署",
+        project="chainmem",
+        status="done",
+        occurred_at="2026-10-22T02:00:00Z",
+    )
+    cm.record_work_event(
+        agent_id="codex",
+        task_summary="修复博客样式",
+        project="blog",
+        status="active",
+        occurred_at="2026-10-22T03:00:00Z",
+    )
+    results = cm.recall_work_events(
+        query="局域网记忆服务",
+        days=7,
+        project="chainmem",
+    )
+    assert results
+    assert results[0]["agent_id"] == "hermes"
+    assert results[0]["task_summary"] == "完成 ChainMem 局域网部署"
+    cm.close()
+
+
+def test_private_event_hidden_from_other_agent(tmp_path):
+    from chainmem import ChainMemory
+
+    cm = ChainMemory(db_path=str(tmp_path / "data.db")).open()
+    event = cm.record_work_event(
+        agent_id="hermes",
+        task_summary="私有部署记录",
+        visibility="private",
+        occurred_at="2026-10-22T02:00:00Z",
+    )
+    assert cm.get_work_event(
+        event["id"], include_private_for="codex"
+    ) is None
+    assert cm.get_work_event(
+        event["id"], include_private_for="hermes"
+    ) is not None
+    cm.close()

@@ -328,6 +328,65 @@ class Retriever:
         results = self._traverse_forward(start_id, max_steps)
         return results
 
+    def retrieve_chain_matches(
+        self,
+        query: str,
+        tags: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[tuple[str, float]]:
+        """Return matching chain IDs and their best semantic score."""
+        if self.index is None or self.index.ntotal == 0:
+            self.rebuild_index()
+            if self.index is None or self.index.ntotal == 0:
+                return []
+
+        raw_query = query.strip()
+        if not raw_query:
+            return []
+        search_query = (
+            raw_query + " " + raw_query
+            if len(raw_query) <= 3
+            else raw_query
+        )
+        q_vec = self._get_embedder().encode(
+            [search_query],
+            normalize_embeddings=True,
+        ).astype(np.float32)
+        top_k = min(max(limit * 4, 10), self.index.ntotal)
+        scores, indices = self.index.search(q_vec, top_k)
+
+        chain_scores: dict[str, float] = {}
+        for i in range(top_k):
+            idx = int(indices[0][i])
+            if idx < 0 or idx >= len(self.id_list):
+                continue
+            node_id = self.id_list[idx]
+            chain_id = self.id_to_chain.get(node_id, "")
+            if not chain_id:
+                continue
+            if tags:
+                node_tags = self.chain_tags.get(chain_id, [])
+                if not any(tag in node_tags for tag in tags):
+                    continue
+            score = float(scores[0][i])
+            node_text = self.id_to_text.get(node_id, "")
+            if raw_query in node_text:
+                score += 0.20
+            chain_scores[chain_id] = max(
+                chain_scores.get(chain_id, 0.0),
+                score,
+            )
+
+        if not chain_scores and tags:
+            return []
+
+        ranked = sorted(
+            chain_scores.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        return ranked[: max(1, min(limit, 50))]
+
     def _substring_fallback(self, query: str,
                             tags: list[str] | None = None) -> list[str]:
         """纯子串匹配兜底 + 模糊分词兜底

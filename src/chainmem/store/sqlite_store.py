@@ -238,6 +238,19 @@ class SQLiteStore:
         ).fetchone()
         return parse_work_event(row) if row is not None else None
 
+    def find_work_event(
+        self,
+        agent_id: str,
+        session_id: str,
+        content_hash: str,
+    ) -> dict | None:
+        row = self.conn.execute(
+            """SELECT * FROM work_events
+               WHERE agent_id=? AND session_id=? AND content_hash=?""",
+            (agent_id, session_id, content_hash),
+        ).fetchone()
+        return parse_work_event(row) if row is not None else None
+
     def list_work_events(
         self,
         *,
