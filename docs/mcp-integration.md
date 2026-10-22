@@ -160,6 +160,26 @@ hermes:replace-with-random-token
 codex:replace-with-another-random-token
 ```
 
+### Pi Agent
+
+Pi Agent 原生支持 Streamable HTTP MCP。添加 ChainMem：
+
+```bash
+pi mcp add chainmem \
+  --url http://127.0.0.1:3115/mcp \
+  --header "Authorization=Bearer <pi-token>" \
+  --description "ChainMem 跨 Agent 工作记忆" \
+  --exposure direct
+```
+
+检查连接和工具：
+
+```bash
+pi mcp list --json
+```
+
+配置保存在 `~/.pi/agent/mcp.json`，权限应为 `600`。
+
 ## 可用工具
 
 | 工具 | 功能 | 参数 |

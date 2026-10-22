@@ -77,6 +77,37 @@ Token 值未写入本文档或 Git。
 
 该记录由 `codex` 身份写入，并通过 `hermes` 身份成功回忆。
 
+## Pi Agent 接入
+
+- Pi 版本：见 `pi --version`
+- 配置文件：`/home/boronglee/.pi/agent/mcp.json`
+- 配置备份：`/home/boronglee/.pi/agent/mcp.json.bak.chainmem.20261022-115829`
+- MCP 名称：`chainmem`
+- MCP 地址：`http://127.0.0.1:3115/mcp`
+- 传输方式：Streamable HTTP
+- 工具暴露模式：`direct`
+- 连接状态：`connected`
+- 配置权限：`600`
+- Pi 独立身份：`pi`
+
+`pi mcp list --json` 显示 ChainMem 的七个工具全部可用：
+
+- `chainmem_ingest`
+- `chainmem_retrieve`
+- `chainmem_stats`
+- `work_memory_record`
+- `work_memory_recall`
+- `work_memory_timeline`
+- `work_memory_get`
+
+已通过 `pi` 身份写入工作事件：
+
+```text
+Pi Agent 接入 ChainMem MCP
+```
+
+并通过 `codex` 身份成功回忆，确认 Pi Token 映射和跨 Agent 回忆均正常。
+
 ## 回滚步骤
 
 ### 恢复服务和数据库
