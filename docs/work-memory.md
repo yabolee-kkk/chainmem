@@ -244,3 +244,7 @@ curl -sS http://127.0.0.1:3115/mcp \
 ```
 
 工具列表应包含七个工具。
+
+## 部署记录
+
+- [ChainMem v0.6.0 工作记忆部署记录](deployments/2026-10-22-work-memory-v0.6.0.md)
