@@ -36,6 +36,10 @@ def _get_cm(db: str | None = None) -> ChainMemory:
     return cm.open()
 
 
+work_app = typer.Typer(help="跨 Agent 工作记忆")
+app.add_typer(work_app, name="work")
+
+
 @app.command()
 def ingest(
     text: str = typer.Argument(..., help="要结链的文本"),
@@ -123,6 +127,133 @@ def stats(
             rprint(f"  [dim]{c['id'][:8]}...[/dim] 前缀=[bold]{c['anchor_prefix']}[/bold]  "
                    f"节点={c['node_count']}  强度={c['strength']:.1f}{tag_str}  "
                    f"[dim]{c['created_at']}[/dim]")
+
+
+@work_app.command("record")
+def work_record(
+    task_summary: str = typer.Argument(..., help="任务摘要"),
+    agent_id: str = typer.Option(..., "--agent-id", help="Agent 身份"),
+    project: str = typer.Option("", "--project", help="项目名称"),
+    host: str = typer.Option("", "--host", help="机器名称"),
+    session_id: str = typer.Option("", "--session-id", help="会话 ID"),
+    status: str = typer.Option("unknown", "--status", help="工作状态"),
+    artifacts: str = typer.Option("", "--artifacts", help="产出物（逗号分隔）"),
+    tags: str = typer.Option("", "--tags", help="标签（逗号分隔）"),
+    source: str = typer.Option("", "--source", help="来源"),
+    occurred_at: str | None = typer.Option(None, "--occurred-at", help="发生时间 ISO 8601"),
+    raw_text: str | None = typer.Option(None, "--raw-text", help="可选原始对话"),
+    visibility: str = typer.Option("shared", "--visibility", help="shared 或 private"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """记录一条工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        event = cm.record_work_event(
+            agent_id=agent_id,
+            task_summary=task_summary,
+            host=host,
+            session_id=session_id,
+            project=project,
+            status=status,
+            artifacts=_as_string_list(artifacts),
+            tags=_as_string_list(tags),
+            source=source,
+            occurred_at=occurred_at,
+            raw_text=raw_text,
+            visibility=visibility,
+        )
+        rprint(Panel(format_work_event(event), title="工作事件已记录"))
+    finally:
+        cm.close()
+
+
+@work_app.command("recall")
+def work_recall(
+    query: str = typer.Argument(..., help="模糊回忆线索"),
+    days: int = typer.Option(7, "--days", help="查询最近多少天"),
+    limit: int = typer.Option(5, "--limit", help="最多返回条数"),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Agent 过滤或私有事件身份"),
+    project: str | None = typer.Option(None, "--project", help="项目过滤"),
+    status: str | None = typer.Option(None, "--status", help="状态过滤"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """根据线索回忆过去的工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        events = cm.recall_work_events(
+            query=query,
+            days=days,
+            agent_id=agent_id,
+            project=project,
+            status=status,
+            limit=limit,
+            include_private_for=agent_id,
+        )
+        if not events:
+            rprint("[yellow]未找到匹配的工作记忆[/yellow]")
+            return
+        rprint("[bold]回忆到以下工作事件（不是知识库事实）：[/bold]\n")
+        for event in events:
+            rprint(format_work_event(event, include_score=True))
+            rprint()
+    finally:
+        cm.close()
+
+
+@work_app.command("timeline")
+def work_timeline(
+    days: int = typer.Option(7, "--days", help="查询最近多少天"),
+    limit: int = typer.Option(30, "--limit", help="最多返回条数"),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="Agent 过滤或私有事件身份"),
+    project: str | None = typer.Option(None, "--project", help="项目过滤"),
+    status: str | None = typer.Option(None, "--status", help="状态过滤"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """按时间倒序查看工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        events = cm.list_work_events(
+            days=days,
+            agent_id=agent_id,
+            project=project,
+            status=status,
+            limit=limit,
+            include_private_for=agent_id,
+        )
+        if not events:
+            rprint("[yellow]未找到工作事件[/yellow]")
+            return
+        for event in events:
+            rprint(format_work_event(event))
+            rprint()
+    finally:
+        cm.close()
+
+
+@work_app.command("get")
+def work_get(
+    event_id: str = typer.Argument(..., help="工作事件 ID"),
+    agent_id: str | None = typer.Option(None, "--agent-id", help="私有事件所属 Agent"),
+    db: str = typer.Option(DEFAULT_DB, "--db", "-d", help="数据库路径"),
+):
+    """读取单条工作事件。"""
+    from chainmem.work_memory import format_work_event
+
+    cm = _get_cm(db)
+    try:
+        event = cm.get_work_event(event_id, include_private_for=agent_id)
+        if event is None:
+            rprint("[yellow]工作事件不存在或无权访问[/yellow]")
+            raise typer.Exit(1)
+        rprint(format_work_event(event))
+    finally:
+        cm.close()
 
 
 @app.command()

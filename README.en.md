@@ -71,6 +71,7 @@ Search "stock" → find chain head → traverse pointers → full conversation r
 | 🏷️ **Tag Classification** | Organize memories by project/topic |
 | 🖥️ **Web Dashboard** | Built-in management UI at `http://127.0.0.1:3115/` — browse, search, and create memories |
 | 🔌 **MCP Protocol** | HTTP + Unix Socket dual transport, native Hermes Agent integration ([setup guide](docs/mcp-integration.md)) |
+| 🧑‍💻 **Cross-agent work memory** | Record which agent worked on what, with semantic and timeline recall ([guide](docs/work-memory.md)) |
 | 🐍 **Python SDK** | One-liner integration into your project |
 
 ---
@@ -300,6 +301,18 @@ Three tools available after startup:
 | `chainmem_ingest(text, source, tags)` | Store memory |
 | `chainmem_retrieve(query, tags)` | Retrieve memory (with tag filtering) |
 | `chainmem_stats()` | View memory statistics |
+
+Four cross-agent work-memory tools are also available:
+
+| Tool | Function |
+|:-----|:---------|
+| `work_memory_record` | Record an agent, project, task, and artifacts |
+| `work_memory_recall` | Recall work from a fuzzy description |
+| `work_memory_timeline` | List recent work in chronological order |
+| `work_memory_get` | Read one complete work event |
+
+LAN HTTP access uses per-agent tokens. See the
+[work-memory guide](docs/work-memory.md).
 
 ---
 

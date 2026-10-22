@@ -1,6 +1,6 @@
 """ChainMem — 链式 + 向量混合记忆系统"""
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
 
 from chainmem.core.node import ChainNode, Chain
 from chainmem.store.sqlite_store import SQLiteStore

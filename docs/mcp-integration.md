@@ -144,6 +144,22 @@ mcp_servers:
 
 HTTP 服务默认只监听 `127.0.0.1:3115`，不会直接暴露到局域网。需要跨机器访问时，应通过带身份认证的反向代理或 MCP 网关转发，不要直接将无认证端口绑定到公网或不可信局域网。
 
+跨 Agent 使用时，可以直接启用内置 Token 认证：
+
+```bash
+chainmem serve \
+  --http-host 0.0.0.0 \
+  --http-port 3115 \
+  --agent-tokens-file "$HOME/.chainmem/agents.tokens"
+```
+
+Token 文件权限必须为 `600`：
+
+```text
+hermes:replace-with-random-token
+codex:replace-with-another-random-token
+```
+
 ## 可用工具
 
 | 工具 | 功能 | 参数 |
@@ -151,6 +167,12 @@ HTTP 服务默认只监听 `127.0.0.1:3115`，不会直接暴露到局域网。�
 | `chainmem_ingest` | 结链存储 | text (必填), source, tags |
 | `chainmem_retrieve` | 追溯检索 | query (必填), tags |
 | `chainmem_stats` | 记忆统计 | 无 |
+| `work_memory_record` | 记录跨 Agent 工作事件 | task_summary (必填), project, status, artifacts, tags 等 |
+| `work_memory_recall` | 根据线索回忆工作 | query (必填), days, project, agent_id |
+| `work_memory_timeline` | 查看近期工作时间线 | days, project, agent_id, status |
+| `work_memory_get` | 读取单条工作事件 | event_id (必填) |
+
+完整说明见 [跨 Agent 工作记忆指南](work-memory.md)。
 
 ## 故障排查
 
