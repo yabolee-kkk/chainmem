@@ -166,6 +166,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+UMask=0077
 WorkingDirectory=/home/boronglee/chainmem
 Environment=HF_ENDPOINT=https://hf-mirror.com
 Environment=HTTPS_PROXY=http://127.0.0.1:10808

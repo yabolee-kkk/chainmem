@@ -32,7 +32,8 @@
 - Agent Token：`/home/boronglee/.chainmem/agents.tokens`
 - systemd 单元：`/home/boronglee/.config/systemd/user/chainmem.service`
 
-Token 文件权限为 `600`，当前配置的 Agent 标识：
+Token 文件权限为 `600`。systemd 服务使用 `UMask=0077`，数据库、WAL、
+密钥和 Token 文件均保持 `600`。当前配置的 Agent 标识：
 
 - `claude`
 - `cc-connect`
